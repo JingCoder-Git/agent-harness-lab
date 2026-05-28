@@ -1,0 +1,47 @@
+{
+  "version": "s08",
+  "decisions": [
+    {
+      "id": "notification-bus",
+      "title": "threading.Queue as the Notification Bus",
+      "description": "Background task results are delivered via a threading.Queue instead of direct callbacks. The background thread puts a notification on the queue when its work completes. The main agent loop polls the queue before each LLM call. This decoupling is important: the background thread doesn't need to know anything about the main loop's state or timing. It just drops a message on the queue and moves on. The main loop picks it up at its own pace -- never mid-API-call, never mid-tool-execution. No race conditions, no callback hell.",
+      "alternatives": "Direct callbacks (background thread calls a function in the main thread) would deliver results faster but create thread-safety issues -- the callback might fire while the main thread is in the middle of building a request. Event-driven systems (asyncio, event emitters) work but add complexity. A queue is the simplest thread-safe communication primitive.",
+      "zh": {
+        "title": "用 threading.Queue 作为通知总线",
+        "description": "后台任务结果通过 threading.Queue 传递，而非直接回调。后台线程在工作完成时向队列放入通知，主 agent 循环在每次 LLM 调用前轮询队列。这种解耦很重要：后台线程无需了解主循环的状态或时序，只需往队列放入消息然后继续。主循环按自己的节奏取出消息——永远不会在 API 调用中途或工具执行中途。没有竞争条件，没有回调地狱。"
+      },
+      "ja": {
+        "title": "threading.Queue を通知バスとして使用",
+        "description": "バックグラウンドタスクの結果は直接コールバックではなく threading.Queue を通じて配信されます。バックグラウンドスレッドは作業完了時にキューに通知を投入します。メインのエージェントループは各 LLM 呼び出しの前にキューをポーリングします。この疎結合が重要です：バックグラウンドスレッドはメインループの状態やタイミングを一切知る必要がありません。キューにメッセージを入れて先に進むだけです。メインループは自分のペースで取り出します――API 呼び出しの途中でもツール実行の途中でもありません。レースコンディションもコールバック地獄もありません。"
+      }
+    },
+    {
+      "id": "daemon-threads",
+      "title": "Background Tasks Run as Daemon Threads",
+      "description": "Background tasks are created as detached workers. In Node.js, the harness should track each worker and terminate or detach it intentionally when the main loop exits. This prevents a common problem: if the main agent completes its work but a background worker is still running, the process can hang or leak resources. Explicit lifecycle tracking keeps exit behavior clean.",
+      "alternatives": "Non-daemon threads with explicit cleanup (join with timeout, then terminate) give more control over shutdown but require careful lifecycle management. Process-based parallelism (multiprocessing) provides stronger isolation but higher overhead. Daemon threads are the pragmatic choice: minimal code, correct behavior in the common case.",
+      "zh": {
+        "title": "后台任务以守护线程运行",
+        "description": "后台任务以可追踪的 worker 创建。在 Node.js 中，Harness 应在主循环退出时明确终止、等待或分离 worker。这能避免主 agent 已完成但后台任务仍占用资源导致进程挂住。显式生命周期管理让退出行为更可控。"
+      },
+      "ja": {
+        "title": "バックグラウンドタスクはデーモンスレッドとして実行",
+        "description": "バックグラウンドタスクは追跡可能な worker として作成されます。Node.js では、メインループ終了時に worker を終了、待機、または明示的に切り離す必要があります。これにより、メインエージェントが完了した後もバックグラウンド処理が残ってプロセスがハングする問題を防げます。"
+      }
+    },
+    {
+      "id": "attachment-format",
+      "title": "Structured Notification Format with Type Tags",
+      "description": "Notifications from background tasks use a structured format: {\"type\": \"attachment\", \"attachment\": {status, result, ...}} instead of plain text strings. The type tag lets the main loop handle different notification types differently: an 'attachment' might be injected into the conversation as a tool_result, while a 'status_update' might just update a progress indicator. Machine-readable notifications also enable programmatic filtering (show only errors, suppress progress updates) and UI rendering (display status as a progress bar, not raw text).",
+      "alternatives": "Plain text notifications are simpler but lose structure. The main loop would have to parse free-form text to determine what happened, which is fragile. A class hierarchy is convenient inside one runtime but less portable -- JSON structures work the same way regardless of language or serialization format.",
+      "zh": {
+        "title": "带类型标签的结构化通知格式",
+        "description": "后台任务的通知使用结构化格式：{\"type\": \"attachment\", \"attachment\": {status, result, ...}}，而非纯文本字符串。类型标签让主循环可以区别处理不同通知类型：attachment 可能作为 tool_result 注入对话，而 status_update 可能只更新进度指示器。机器可读的通知还支持程序化过滤（只显示错误、抑制进度更新）和 UI 渲染（将状态显示为进度条而非原始文本）。"
+      },
+      "ja": {
+        "title": "型タグ付き構造化通知フォーマット",
+        "description": "バックグラウンドタスクからの通知は構造化フォーマットを使用します：プレーンテキストではなく {\"type\": \"attachment\", \"attachment\": {status, result, ...}} です。型タグによりメインループは異なる通知タイプを異なる方法で処理できます：attachment は会話に tool_result として注入され、status_update は進捗インジケーターの更新のみを行うかもしれません。機械可読な通知はプログラム的なフィルタリング（エラーのみ表示、進捗更新の抑制）や UI レンダリング（ステータスを生テキストではなくプログレスバーとして表示）も可能にします。"
+      }
+    }
+  ]
+}

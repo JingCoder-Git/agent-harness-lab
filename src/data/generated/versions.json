@@ -1,0 +1,437 @@
+{
+  "versions": [
+    {
+      "id": "s01",
+      "filename": "s01_agent_loop.ts",
+      "title": "The Agent Loop",
+      "subtitle": "Bash is All You Need",
+      "loc": 38,
+      "tools": [
+        "bash"
+      ],
+      "newTools": [
+        "bash"
+      ],
+      "coreAddition": "Single-tool agent loop",
+      "keyInsight": "The minimal agent kernel is a while loop + one tool",
+      "classes": [],
+      "functions": [
+        {
+          "name": "callModel",
+          "signature": "callModel(messages: Message[])",
+          "startLine": 18
+        },
+        {
+          "name": "agentLoop",
+          "signature": "agentLoop(messages: Message[])",
+          "startLine": 30
+        }
+      ],
+      "layer": "tools",
+      "source": "type Message = { role: \"user\" | \"assistant\" | \"tool\"; content: string };\n\ntype ToolCall = {\n  name: \"bash\";\n  input: { command: string };\n};\n\ntype ModelResponse = {\n  text: string;\n  toolCalls: ToolCall[];\n  stopReason: \"tool_use\" | \"end_turn\";\n};\n\nconst tools = {\n  bash: async ({ command }: { command: string }) => `executed: ${command}`,\n};\n\nasync function callModel(messages: Message[]): Promise<ModelResponse> {\n  const last = messages.at(-1)?.content ?? \"\";\n  if (last.includes(\"hello\")) {\n    return {\n      text: \"I will inspect the workspace first.\",\n      toolCalls: [{ name: \"bash\", input: { command: \"ls\" } }],\n      stopReason: \"tool_use\",\n    };\n  }\n  return { text: \"Done.\", toolCalls: [], stopReason: \"end_turn\" };\n}\n\nasync function agentLoop(messages: Message[]) {\n  while (true) {\n    const response = await callModel(messages);\n    messages.push({ role: \"assistant\", content: response.text });\n\n    if (response.stopReason !== \"tool_use\") break;\n\n    for (const toolCall of response.toolCalls) {\n      const result = await tools[toolCall.name](toolCall.input);\n      messages.push({ role: \"tool\", content: result });\n    }\n  }\n\n  return messages;\n}\n\nagentLoop([{ role: \"user\", content: \"hello\" }]);\n\nexport {};\n"
+    },
+    {
+      "id": "s02",
+      "filename": "s02_tool_use.ts",
+      "title": "Tools",
+      "subtitle": "One Handler Per Tool",
+      "loc": 20,
+      "tools": [
+        "readFile"
+      ],
+      "newTools": [
+        "readFile"
+      ],
+      "coreAddition": "Tool dispatch map",
+      "keyInsight": "The loop stays the same; new tools register into the dispatch map",
+      "classes": [],
+      "functions": [
+        {
+          "name": "dispatchTool",
+          "signature": "dispatchTool(name: string, input: Record<string, unknown>)",
+          "startLine": 9
+        },
+        {
+          "name": "runToolTurn",
+          "signature": "runToolTurn()",
+          "startLine": 15
+        }
+      ],
+      "layer": "tools",
+      "source": "type ToolHandler = (input: Record<string, unknown>) => Promise<string>;\n\nconst toolRegistry: Record<string, ToolHandler> = {\n  bash: async (input) => `shell: ${input.command}`,\n  readFile: async (input) => `file: ${input.path}`,\n  writeFile: async (input) => `wrote: ${input.path}`,\n};\n\nasync function dispatchTool(name: string, input: Record<string, unknown>) {\n  const handler = toolRegistry[name];\n  if (!handler) return `Unknown tool: ${name}`;\n  return handler(input);\n}\n\nasync function runToolTurn() {\n  const toolCall = {\n    name: \"readFile\",\n    input: { path: \"README.md\" },\n  };\n\n  return dispatchTool(toolCall.name, toolCall.input);\n}\n\nrunToolTurn();\n\nexport {};\n"
+    },
+    {
+      "id": "s03",
+      "filename": "s03_todo_write.ts",
+      "title": "TodoWrite",
+      "subtitle": "Plan Before You Act",
+      "loc": 35,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "TodoManager + nag reminder",
+      "keyInsight": "An agent without a plan drifts; list the steps first, then execute",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createTodoManager",
+          "signature": "createTodoManager()",
+          "startLine": 7
+        }
+      ],
+      "layer": "planning",
+      "source": "type Todo = {\n  id: number;\n  title: string;\n  status: \"pending\" | \"in_progress\" | \"completed\";\n};\n\nfunction createTodoManager() {\n  let todos: Todo[] = [];\n\n  function set(nextTodos: Todo[]) {\n    todos = nextTodos;\n  }\n\n  function next() {\n    return todos.find((todo) => todo.status !== \"completed\");\n  }\n\n  function complete(id: number) {\n    todos = todos.map((todo) =>\n      todo.id === id ? { ...todo, status: \"completed\" } : todo\n    );\n  }\n\n  return { set, next, complete };\n}\n\nasync function agentTurn(\n  todoManager: ReturnType<typeof createTodoManager>,\n  userRequest: string\n) {\n  if (!todoManager.next()) {\n    todoManager.set([\n      { id: 1, title: `Plan: ${userRequest}`, status: \"in_progress\" },\n      { id: 2, title: \"Implement smallest working change\", status: \"pending\" },\n      { id: 3, title: \"Verify behavior\", status: \"pending\" },\n    ]);\n  }\n\n  return todoManager.next();\n}\n\nagentTurn(createTodoManager(), \"build a calculator\");\n\nexport {};\n"
+    },
+    {
+      "id": "s04",
+      "filename": "s04_subagent.ts",
+      "title": "Subagents",
+      "subtitle": "Clean Context Per Subtask",
+      "loc": 20,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "Subagent spawn with isolated messages[]",
+      "keyInsight": "Subagents use independent messages[], keeping the main conversation clean",
+      "classes": [],
+      "functions": [
+        {
+          "name": "runAgent",
+          "signature": "runAgent(messages: Message[])",
+          "startLine": 3
+        },
+        {
+          "name": "spawnSubagent",
+          "signature": "spawnSubagent(task: string)",
+          "startLine": 7
+        },
+        {
+          "name": "parentAgent",
+          "signature": "parentAgent()",
+          "startLine": 15
+        }
+      ],
+      "layer": "planning",
+      "source": "type Message = { role: \"user\" | \"assistant\" | \"tool\"; content: string };\n\nasync function runAgent(messages: Message[]) {\n  return `summary from ${messages.length} messages`;\n}\n\nasync function spawnSubagent(task: string) {\n  const childMessages: Message[] = [\n    { role: \"user\", content: task },\n  ];\n\n  return runAgent(childMessages);\n}\n\nasync function parentAgent() {\n  const parentMessages: Message[] = [\n    { role: \"user\", content: \"Refactor the auth module\" },\n  ];\n\n  const testSummary = await spawnSubagent(\"Write tests for auth edge cases\");\n  parentMessages.push({ role: \"tool\", content: testSummary });\n\n  return parentMessages;\n}\n\nparentAgent();\n\nexport {};\n"
+    },
+    {
+      "id": "s05",
+      "filename": "s05_skill_loading.ts",
+      "title": "Skills",
+      "subtitle": "Load on Demand",
+      "loc": 29,
+      "tools": [
+        "pdf"
+      ],
+      "newTools": [
+        "pdf"
+      ],
+      "coreAddition": "SkillLoader + two-layer injection",
+      "keyInsight": "Inject knowledge via tool_result when needed, not upfront in the system prompt",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createSkillLoader",
+          "signature": "createSkillLoader(skills: Skill[])",
+          "startLine": 7
+        }
+      ],
+      "layer": "planning",
+      "source": "type Skill = {\n  name: string;\n  description: string;\n  body: string;\n};\n\nfunction createSkillLoader(skills: Skill[]) {\n  function list() {\n    return skills.map(({ name, description }) => ({ name, description }));\n  }\n\n  function load(name: string) {\n    return skills.find((skill) => skill.name === name)?.body;\n  }\n\n  return { list, load };\n}\n\nasync function agentWithSkills(\n  request: string,\n  loader: ReturnType<typeof createSkillLoader>\n) {\n  const available = loader.list();\n  const selected = available.find((skill) => request.includes(skill.name));\n  if (!selected) return \"No skill needed.\";\n\n  const skillText = loader.load(selected.name);\n  return `Loaded skill into context:\\n${skillText}`;\n}\n\nagentWithSkills(\n  \"Use the pdf skill\",\n  createSkillLoader([{ name: \"pdf\", description: \"Read PDFs\", body: \"PDF workflow...\" }])\n);\n\nexport {};\n"
+    },
+    {
+      "id": "s06",
+      "filename": "s06_context_compact.ts",
+      "title": "Compact",
+      "subtitle": "Three-Layer Compression",
+      "loc": 20,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "micro-compact + auto-compact + archival",
+      "keyInsight": "Context will fill up; three-layer compression strategy enables infinite sessions",
+      "classes": [],
+      "functions": [
+        {
+          "name": "microCompact",
+          "signature": "microCompact(messages: Message[])",
+          "startLine": 3
+        },
+        {
+          "name": "autoCompact",
+          "signature": "autoCompact(messages: Message[])",
+          "startLine": 10
+        },
+        {
+          "name": "compactIfNeeded",
+          "signature": "compactIfNeeded(messages: Message[], tokenEstimate: number)",
+          "startLine": 18
+        }
+      ],
+      "layer": "memory",
+      "source": "type Message = { role: string; content: string; keep?: boolean };\n\nfunction microCompact(messages: Message[]) {\n  return messages.map((message) => {\n    if (message.keep || message.role !== \"tool\") return message;\n    return { ...message, content: message.content.slice(0, 120) };\n  });\n}\n\nasync function autoCompact(messages: Message[]) {\n  const summary = messages\n    .map((message) => `${message.role}: ${message.content.slice(0, 60)}`)\n    .join(\"\\n\");\n\n  return [{ role: \"system\", content: `Conversation summary:\\n${summary}`, keep: true }];\n}\n\nasync function compactIfNeeded(messages: Message[], tokenEstimate: number) {\n  const trimmed = microCompact(messages);\n  if (tokenEstimate < 100_000) return trimmed;\n  return autoCompact(trimmed);\n}\n\ncompactIfNeeded([{ role: \"tool\", content: \"long output \".repeat(50) }], 120_000);\n\nexport {};\n"
+    },
+    {
+      "id": "s07",
+      "filename": "s07_task_system.ts",
+      "title": "Tasks",
+      "subtitle": "Task Graph + Dependencies",
+      "loc": 28,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "TaskManager with file-based state + dependency graph",
+      "keyInsight": "A file-based task graph with ordering, parallelism, and dependencies -- the coordination backbone for multi-agent work",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createTaskBoard",
+          "signature": "createTaskBoard(initialTasks: Task[])",
+          "startLine": 10
+        }
+      ],
+      "layer": "planning",
+      "source": "type TaskStatus = \"ready\" | \"blocked\" | \"in_progress\" | \"completed\";\n\ntype Task = {\n  id: number;\n  title: string;\n  status: TaskStatus;\n  blockedBy: number[];\n};\n\nfunction createTaskBoard(initialTasks: Task[]) {\n  let tasks = initialTasks;\n\n  function claimNext() {\n    return tasks.find(\n      (task) => task.status === \"ready\" && task.blockedBy.length === 0\n    );\n  }\n\n  function complete(id: number) {\n    tasks = tasks.map((task) =>\n      task.id === id\n        ? { ...task, status: \"completed\" }\n        : { ...task, blockedBy: task.blockedBy.filter((blockedId) => blockedId !== id) }\n    );\n  }\n\n  return { claimNext, complete };\n}\n\ncreateTaskBoard([\n  { id: 1, title: \"Create schema\", status: \"ready\", blockedBy: [] },\n  { id: 2, title: \"Build API\", status: \"blocked\", blockedBy: [1] },\n]).claimNext();\n\nexport {};\n"
+    },
+    {
+      "id": "s08",
+      "filename": "s08_background_tasks.ts",
+      "title": "Background Tasks",
+      "subtitle": "Background Threads + Notifications",
+      "loc": 22,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "BackgroundManager + notification queue",
+      "keyInsight": "Run slow operations in the background; the agent keeps thinking ahead",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createBackgroundManager",
+          "signature": "createBackgroundManager()",
+          "startLine": 3
+        },
+        {
+          "name": "agentTurn",
+          "signature": "agentTurn(background: ReturnType<typeof createBackgroundManager>)",
+          "startLine": 21
+        }
+      ],
+      "layer": "concurrency",
+      "source": "type Notification = { id: string; result: string };\n\nfunction createBackgroundManager() {\n  let notifications: Notification[] = [];\n\n  function run(id: string, work: () => Promise<string>) {\n    work().then((result) => {\n      notifications.push({ id, result });\n    });\n  }\n\n  function drain() {\n    const pending = notifications;\n    notifications = [];\n    return pending;\n  }\n\n  return { run, drain };\n}\n\nasync function agentTurn(background: ReturnType<typeof createBackgroundManager>) {\n  background.run(\"tests\", async () => \"47 passed, 2 failed\");\n  const notifications = background.drain();\n  return notifications.map((item) => `[${item.id}] ${item.result}`);\n}\n\nagentTurn(createBackgroundManager());\n\nexport {};\n"
+    },
+    {
+      "id": "s09",
+      "filename": "s09_agent_teams.ts",
+      "title": "Agent Teams",
+      "subtitle": "Teammates + Mailboxes",
+      "loc": 24,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "TeammateManager + file-based mailbox",
+      "keyInsight": "When one agent can't finish, delegate to persistent teammates via async mailboxes",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createMailbox",
+          "signature": "createMailbox()",
+          "startLine": 3
+        },
+        {
+          "name": "leadAgent",
+          "signature": "leadAgent(mailbox: ReturnType<typeof createMailbox>)",
+          "startLine": 17
+        },
+        {
+          "name": "teammateAgent",
+          "signature": "teammateAgent(mailbox: ReturnType<typeof createMailbox>)",
+          "startLine": 25
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type Mail = { from: string; to: string; body: string };\n\nfunction createMailbox() {\n  const mail: Mail[] = [];\n\n  function send(message: Mail) {\n    mail.push(message);\n  }\n\n  function receive(agent: string) {\n    return mail.filter((message) => message.to === agent);\n  }\n\n  return { send, receive };\n}\n\nasync function leadAgent(mailbox: ReturnType<typeof createMailbox>) {\n  mailbox.send({\n    from: \"lead\",\n    to: \"coder\",\n    body: \"Implement the parser and report back.\",\n  });\n}\n\nasync function teammateAgent(mailbox: ReturnType<typeof createMailbox>) {\n  return mailbox.receive(\"coder\").map((message) => message.body);\n}\n\nconst mailbox = createMailbox();\nleadAgent(mailbox).then(() => teammateAgent(mailbox));\n\nexport {};\n"
+    },
+    {
+      "id": "s10",
+      "filename": "s10_team_protocols.ts",
+      "title": "Team Protocols",
+      "subtitle": "Shared Communication Rules",
+      "loc": 25,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "request_id correlation for two protocols",
+      "keyInsight": "One request-response pattern drives all team negotiation",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createProtocolBus",
+          "signature": "createProtocolBus()",
+          "startLine": 7
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type ProtocolMessage = {\n  requestId: string;\n  type: \"plan.request\" | \"plan.response\" | \"shutdown.request\" | \"shutdown.response\";\n  body: string;\n};\n\nfunction createProtocolBus() {\n  const messages: ProtocolMessage[] = [];\n\n  function publish(message: ProtocolMessage) {\n    messages.push(message);\n  }\n\n  function repliesTo(requestId: string) {\n    return messages.filter((message) => message.requestId === requestId);\n  }\n\n  return { publish, repliesTo };\n}\n\nasync function requestPlanApproval(\n  bus: ReturnType<typeof createProtocolBus>,\n  plan: string\n) {\n  const requestId = crypto.randomUUID();\n  bus.publish({ requestId, type: \"plan.request\", body: plan });\n  return requestId;\n}\n\nrequestPlanApproval(createProtocolBus(), \"Refactor auth in three commits\");\n\nexport {};\n"
+    },
+    {
+      "id": "s11",
+      "filename": "s11_autonomous_agents.ts",
+      "title": "Autonomous Agents",
+      "subtitle": "Scan Board, Claim Tasks",
+      "loc": 19,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "Task board polling + timeout-based self-governance",
+      "keyInsight": "Teammates scan the board and claim tasks themselves; no need for the lead to assign each one",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createAutonomousWorker",
+          "signature": "createAutonomousWorker(name: string)",
+          "startLine": 3
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type Task = { id: number; title: string; owner?: string; status: \"ready\" | \"claimed\" };\n\nfunction createAutonomousWorker(name: string) {\n  function scan(tasks: Task[]) {\n    return tasks.find((task) => task.status === \"ready\" && !task.owner);\n  }\n\n  function claim(task: Task) {\n    return { ...task, owner: name, status: \"claimed\" as const };\n  }\n\n  async function tick(tasks: Task[]) {\n    const task = scan(tasks);\n    if (!task) return \"idle\";\n    return claim(task);\n  }\n\n  return { scan, claim, tick };\n}\n\ncreateAutonomousWorker(\"tester\").tick([\n  { id: 1, title: \"Add API tests\", status: \"ready\" },\n]);\n\nexport {};\n"
+    },
+    {
+      "id": "s12",
+      "filename": "s12_worktree_task_isolation.ts",
+      "title": "Worktree + Task Isolation",
+      "subtitle": "Isolate by Directory",
+      "loc": 26,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "Composable worktree lifecycle + event stream over a shared task board",
+      "keyInsight": "Each works in its own directory; tasks manage goals, worktrees manage directories, bound by ID",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createWorktreeManager",
+          "signature": "createWorktreeManager()",
+          "startLine": 3
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type Worktree = { name: string; path: string; taskId?: number; status: \"active\" | \"kept\" };\n\nfunction createWorktreeManager() {\n  let worktrees: Worktree[] = [];\n\n  function create(name: string, taskId: number) {\n    const worktree = {\n      name,\n      path: `.worktrees/${name}`,\n      taskId,\n      status: \"active\" as const,\n    };\n    worktrees.push(worktree);\n    return worktree;\n  }\n\n  function keep(name: string) {\n    worktrees = worktrees.map((worktree) =>\n      worktree.name === name ? { ...worktree, status: \"kept\" } : worktree\n    );\n  }\n\n  function list() {\n    return worktrees;\n  }\n\n  return { create, keep, list };\n}\n\nconst manager = createWorktreeManager();\nmanager.create(\"auth-refactor\", 1);\n\nexport {};\n"
+    }
+  ],
+  "diffs": [
+    {
+      "from": "s01",
+      "to": "s02",
+      "newClasses": [],
+      "newFunctions": [
+        "dispatchTool",
+        "runToolTurn"
+      ],
+      "newTools": [
+        "readFile"
+      ],
+      "locDelta": -18
+    },
+    {
+      "from": "s02",
+      "to": "s03",
+      "newClasses": [],
+      "newFunctions": [
+        "createTodoManager"
+      ],
+      "newTools": [],
+      "locDelta": 15
+    },
+    {
+      "from": "s03",
+      "to": "s04",
+      "newClasses": [],
+      "newFunctions": [
+        "runAgent",
+        "spawnSubagent",
+        "parentAgent"
+      ],
+      "newTools": [],
+      "locDelta": -15
+    },
+    {
+      "from": "s04",
+      "to": "s05",
+      "newClasses": [],
+      "newFunctions": [
+        "createSkillLoader"
+      ],
+      "newTools": [
+        "pdf"
+      ],
+      "locDelta": 9
+    },
+    {
+      "from": "s05",
+      "to": "s06",
+      "newClasses": [],
+      "newFunctions": [
+        "microCompact",
+        "autoCompact",
+        "compactIfNeeded"
+      ],
+      "newTools": [],
+      "locDelta": -9
+    },
+    {
+      "from": "s06",
+      "to": "s07",
+      "newClasses": [],
+      "newFunctions": [
+        "createTaskBoard"
+      ],
+      "newTools": [],
+      "locDelta": 8
+    },
+    {
+      "from": "s07",
+      "to": "s08",
+      "newClasses": [],
+      "newFunctions": [
+        "createBackgroundManager",
+        "agentTurn"
+      ],
+      "newTools": [],
+      "locDelta": -6
+    },
+    {
+      "from": "s08",
+      "to": "s09",
+      "newClasses": [],
+      "newFunctions": [
+        "createMailbox",
+        "leadAgent",
+        "teammateAgent"
+      ],
+      "newTools": [],
+      "locDelta": 2
+    },
+    {
+      "from": "s09",
+      "to": "s10",
+      "newClasses": [],
+      "newFunctions": [
+        "createProtocolBus"
+      ],
+      "newTools": [],
+      "locDelta": 1
+    },
+    {
+      "from": "s10",
+      "to": "s11",
+      "newClasses": [],
+      "newFunctions": [
+        "createAutonomousWorker"
+      ],
+      "newTools": [],
+      "locDelta": -6
+    },
+    {
+      "from": "s11",
+      "to": "s12",
+      "newClasses": [],
+      "newFunctions": [
+        "createWorktreeManager"
+      ],
+      "newTools": [],
+      "locDelta": 7
+    }
+  ]
+}
