@@ -112,6 +112,7 @@ function stripTryIt(content: string): string {
     "Try it",
     "Try It",
     "试一试",
+    "试一下",
     "試してみる",
   ];
   const pattern = new RegExp(
@@ -132,7 +133,15 @@ function normalizeLegacyDocs(content: string): string {
     .replace(/\bPython\b/g, "TypeScript")
     .replace(/\.py\b/g, ".ts")
     .replace(/pytest/g, "a test runner")
-    .replace(/\bdict\b/g, "object");
+    .replace(/\bdict\b/g, "object")
+    .replace(
+      /images\/background-tasks-overview(\.en|\.ja)?\.svg/g,
+      "/course-assets/s13_background_tasks/background-tasks-overview$1.svg"
+    )
+    .replace(
+      /images\/cron-scheduler-overview(\.en|\.ja)?\.svg/g,
+      "/course-assets/s14_cron_scheduler/cron-scheduler-overview$1.svg"
+    );
 }
 
 // Main extraction

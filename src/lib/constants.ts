@@ -1,5 +1,5 @@
 export const VERSION_ORDER = [
-  "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09", "s10", "s11", "s12"
+  "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09", "s10", "s11", "s12", "s13", "s14"
 ] as const;
 
 export const LEARNING_PATH = VERSION_ORDER;
@@ -26,12 +26,14 @@ export const VERSION_META: Record<string, {
   s10: { title: "Team Protocols", subtitle: "Shared Communication Rules", coreAddition: "request_id correlation for two protocols", keyInsight: "One request-response pattern drives all team negotiation", layer: "collaboration", prevVersion: "s09" },
   s11: { title: "Autonomous Agents", subtitle: "Scan Board, Claim Tasks", coreAddition: "Task board polling + timeout-based self-governance", keyInsight: "Teammates scan the board and claim tasks themselves; no need for the lead to assign each one", layer: "collaboration", prevVersion: "s10" },
   s12: { title: "Worktree + Task Isolation", subtitle: "Isolate by Directory", coreAddition: "Composable worktree lifecycle + event stream over a shared task board", keyInsight: "Each works in its own directory; tasks manage goals, worktrees manage directories, bound by ID", layer: "collaboration", prevVersion: "s11" },
+  s13: { title: "Background Tasks", subtitle: "Slow Operations Go to the Background", coreAddition: "Background execution", keyInsight: "The agent can keep reasoning while slow work completes elsewhere.", layer: "concurrency", prevVersion: "s12" },
+  s14: { title: "Cron Scheduler", subtitle: "Producing Work on a Schedule", coreAddition: "Scheduled task creation", keyInsight: "Recurring work should be created by the harness, not remembered by the model.", layer: "concurrency", prevVersion: "s13" },
 };
 
 export const LAYERS = [
   { id: "tools" as const, label: "Tools & Execution", color: "#3B82F6", versions: ["s01", "s02"] },
   { id: "planning" as const, label: "Planning & Coordination", color: "#10B981", versions: ["s03", "s04", "s05", "s07"] },
   { id: "memory" as const, label: "Memory Management", color: "#8B5CF6", versions: ["s06"] },
-  { id: "concurrency" as const, label: "Concurrency", color: "#F59E0B", versions: ["s08"] },
+  { id: "concurrency" as const, label: "Concurrency", color: "#F59E0B", versions: ["s08", "s13", "s14"] },
   { id: "collaboration" as const, label: "Collaboration", color: "#EF4444", versions: ["s09", "s10", "s11", "s12"] },
 ] as const;

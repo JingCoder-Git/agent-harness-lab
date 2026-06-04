@@ -308,6 +308,67 @@
       ],
       "layer": "collaboration",
       "source": "type Worktree = { name: string; path: string; taskId?: number; status: \"active\" | \"kept\" };\n\nfunction createWorktreeManager() {\n  let worktrees: Worktree[] = [];\n\n  function create(name: string, taskId: number) {\n    const worktree = {\n      name,\n      path: `.worktrees/${name}`,\n      taskId,\n      status: \"active\" as const,\n    };\n    worktrees.push(worktree);\n    return worktree;\n  }\n\n  function keep(name: string) {\n    worktrees = worktrees.map((worktree) =>\n      worktree.name === name ? { ...worktree, status: \"kept\" } : worktree\n    );\n  }\n\n  function list() {\n    return worktrees;\n  }\n\n  return { create, keep, list };\n}\n\nconst manager = createWorktreeManager();\nmanager.create(\"auth-refactor\", 1);\n\nexport {};\n"
+    },
+    {
+      "id": "s13",
+      "filename": "s13_background_tasks.ts",
+      "title": "Background Tasks",
+      "subtitle": "Slow Operations Go to the Background",
+      "loc": 54,
+      "tools": [
+        "bash"
+      ],
+      "newTools": [
+        "bash"
+      ],
+      "coreAddition": "Background execution",
+      "keyInsight": "The agent can keep reasoning while slow work completes elsewhere.",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createBackgroundRuntime",
+          "signature": "createBackgroundRuntime()",
+          "startLine": 15
+        },
+        {
+          "name": "runToolTurn",
+          "signature": "runToolTurn()",
+          "startLine": 56
+        }
+      ],
+      "layer": "concurrency",
+      "source": "type TaskStatus = \"running\" | \"completed\" | \"failed\";\n\ntype BackgroundTask = {\n  id: string;\n  command: string;\n  status: TaskStatus;\n  result?: string;\n};\n\ntype Notification = {\n  taskId: string;\n  content: string;\n};\n\nfunction createBackgroundRuntime() {\n  let counter = 0;\n  const tasks = new Map<string, BackgroundTask>();\n  let notifications: Notification[] = [];\n\n  function shouldRunBackground(toolName: string, input: { timeoutMs?: number }) {\n    return toolName === \"bash\" && (input.timeoutMs ?? 0) > 1_000;\n  }\n\n  function startBackgroundTask(command: string, work: () => Promise<string>) {\n    counter += 1;\n    const id = `bg-${counter}`;\n    tasks.set(id, { id, command, status: \"running\" });\n\n    void work()\n      .then((result) => {\n        tasks.set(id, { id, command, status: \"completed\", result });\n        notifications.push({ taskId: id, content: result });\n      })\n      .catch((error: Error) => {\n        const result = error.message;\n        tasks.set(id, { id, command, status: \"failed\", result });\n        notifications.push({ taskId: id, content: result });\n      });\n\n    return { taskId: id, message: \"started in background\" };\n  }\n\n  function collectBackgroundResults() {\n    const ready = notifications;\n    notifications = [];\n    return ready;\n  }\n\n  function getTask(id: string) {\n    return tasks.get(id);\n  }\n\n  return { shouldRunBackground, startBackgroundTask, collectBackgroundResults, getTask };\n}\n\nasync function runToolTurn() {\n  const runtime = createBackgroundRuntime();\n  const toolCall = { name: \"bash\", input: { command: \"npm run build\", timeoutMs: 5_000 } };\n\n  if (runtime.shouldRunBackground(toolCall.name, toolCall.input)) {\n    return runtime.startBackgroundTask(toolCall.input.command, async () => \"build completed\");\n  }\n\n  return { output: \"ran in foreground\" };\n}\n\nvoid runToolTurn();\n\nexport {};\n"
+    },
+    {
+      "id": "s14",
+      "filename": "s14_cron_scheduler.ts",
+      "title": "Cron Scheduler",
+      "subtitle": "Producing Work on a Schedule",
+      "loc": 77,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "Scheduled task creation",
+      "keyInsight": "Recurring work should be created by the harness, not remembered by the model.",
+      "classes": [],
+      "functions": [
+        {
+          "name": "fieldMatches",
+          "signature": "fieldMatches(field: string, value: number)",
+          "startLine": 15
+        },
+        {
+          "name": "cronMatches",
+          "signature": "cronMatches(cron: string, date: Date)",
+          "startLine": 36
+        },
+        {
+          "name": "createCronScheduler",
+          "signature": "createCronScheduler()",
+          "startLine": 51
+        }
+      ],
+      "layer": "concurrency",
+      "source": "type CronJob = {\n  id: string;\n  cron: string;\n  prompt: string;\n  recurring: boolean;\n  durable: boolean;\n};\n\ntype QueuedRun = {\n  jobId: string;\n  prompt: string;\n  dueAt: Date;\n};\n\nfunction fieldMatches(field: string, value: number): boolean {\n  if (field === \"*\") return true;\n  if (field.includes(\",\")) {\n    return field.split(\",\").some((part) => fieldMatches(part, value));\n  }\n  if (field.includes(\"/\")) {\n    const [range, stepText] = field.split(\"/\");\n    const step = Number(stepText);\n    if (range === \"*\") return value % step === 0;\n    if (range.includes(\"-\")) {\n      const [start, end] = range.split(\"-\").map(Number);\n      return value >= start && value <= end && (value - start) % step === 0;\n    }\n  }\n  if (field.includes(\"-\")) {\n    const [start, end] = field.split(\"-\").map(Number);\n    return value >= start && value <= end;\n  }\n  return Number(field) === value;\n}\n\nfunction cronMatches(cron: string, date: Date): boolean {\n  const [minute, hour, dayOfMonth, month, dayOfWeek] = cron.split(\" \");\n  const domMatches = fieldMatches(dayOfMonth, date.getDate());\n  const dowMatches = fieldMatches(dayOfWeek, date.getDay());\n  const dayMatches =\n    dayOfMonth !== \"*\" && dayOfWeek !== \"*\" ? domMatches || dowMatches : domMatches && dowMatches;\n\n  return (\n    fieldMatches(minute, date.getMinutes()) &&\n    fieldMatches(hour, date.getHours()) &&\n    fieldMatches(month, date.getMonth() + 1) &&\n    dayMatches\n  );\n}\n\nfunction createCronScheduler() {\n  let counter = 0;\n  let jobs: CronJob[] = [];\n  let queue: QueuedRun[] = [];\n\n  function scheduleJob(cron: string, prompt: string, recurring = true) {\n    counter += 1;\n    const job = { id: `cron-${counter}`, cron, prompt, recurring, durable: true };\n    jobs = [...jobs, job];\n    return job;\n  }\n\n  function cancelJob(id: string) {\n    jobs = jobs.filter((job) => job.id !== id);\n  }\n\n  function tick(now: Date) {\n    for (const job of jobs) {\n      if (cronMatches(job.cron, now)) {\n        queue.push({ jobId: job.id, prompt: job.prompt, dueAt: now });\n      }\n    }\n  }\n\n  function consumeQueue() {\n    const due = queue;\n    queue = [];\n    return due;\n  }\n\n  return { scheduleJob, cancelJob, tick, consumeQueue };\n}\n\nconst scheduler = createCronScheduler();\nscheduler.scheduleJob(\"0 9 * * 1-5\", \"Review open pull requests\");\nscheduler.tick(new Date(\"2026-06-03T09:00:00\"));\nscheduler.consumeQueue();\n\nexport {};\n"
     }
   ],
   "diffs": [
@@ -432,6 +493,31 @@
       ],
       "newTools": [],
       "locDelta": 7
+    },
+    {
+      "from": "s12",
+      "to": "s13",
+      "newClasses": [],
+      "newFunctions": [
+        "createBackgroundRuntime",
+        "runToolTurn"
+      ],
+      "newTools": [
+        "bash"
+      ],
+      "locDelta": 28
+    },
+    {
+      "from": "s13",
+      "to": "s14",
+      "newClasses": [],
+      "newFunctions": [
+        "fieldMatches",
+        "cronMatches",
+        "createCronScheduler"
+      ],
+      "newTools": [],
+      "locDelta": 23
     }
   ]
 }
