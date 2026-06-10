@@ -153,6 +153,14 @@ function normalizeLegacyDocs(content: string): string {
     .replace(
       /images\/team-protocols-overview(\.en|\.ja)?\.svg/g,
       "/course-assets/s16_team_protocols/team-protocols-overview$1.svg"
+    )
+    .replace(
+      /images\/autonomous-agents-overview(\.en|\.ja)?\.svg/g,
+      "/course-assets/s17_autonomous_agents/autonomous-agents-overview$1.svg"
+    )
+    .replace(
+      /images\/worktree-overview(\.en|\.ja)?\.svg/g,
+      "/course-assets/s18_worktree_isolation/worktree-overview$1.svg"
     );
 }
 

@@ -409,6 +409,53 @@ export const EXECUTION_FLOWS: Record<string, FlowDefinition> = {
       { from: "match", to: "resolved" },
     ],
   },
+  s17: {
+    nodes: [
+      { id: "idle", label: "Teammate IDLE", type: "start", x: COL_CENTER, y: 30 },
+      { id: "inbox", label: "Poll Inbox", type: "process", x: COL_LEFT, y: 130 },
+      { id: "shutdown", label: "shutdown?", type: "decision", x: COL_LEFT, y: 230 },
+      { id: "scan", label: "Scan Task Board", type: "process", x: COL_RIGHT, y: 130 },
+      { id: "available", label: "claimable task?", type: "decision", x: COL_RIGHT, y: 230 },
+      { id: "claim", label: "Claim Task\n(owner check)", type: "subprocess", x: COL_RIGHT, y: 340 },
+      { id: "work", label: "WORK Phase\nLLM + tools", type: "process", x: COL_CENTER, y: 460 },
+      { id: "complete", label: "Complete Task", type: "subprocess", x: COL_LEFT, y: 560 },
+      { id: "exit", label: "SHUTDOWN", type: "end", x: COL_RIGHT, y: 560 },
+    ],
+    edges: [
+      { from: "idle", to: "inbox" },
+      { from: "idle", to: "scan" },
+      { from: "inbox", to: "shutdown" },
+      { from: "shutdown", to: "exit", label: "yes" },
+      { from: "shutdown", to: "scan", label: "no" },
+      { from: "scan", to: "available" },
+      { from: "available", to: "claim", label: "yes" },
+      { from: "available", to: "idle", label: "no" },
+      { from: "claim", to: "work" },
+      { from: "work", to: "complete" },
+      { from: "complete", to: "idle" },
+    ],
+  },
+  s18: {
+    nodes: [
+      { id: "task", label: "Task Record", type: "start", x: COL_CENTER, y: 30 },
+      { id: "validate", label: "Validate\nWorktree Name", type: "decision", x: COL_CENTER, y: 130 },
+      { id: "create", label: "git worktree add\nbranch wt/name", type: "subprocess", x: COL_LEFT, y: 250 },
+      { id: "bind", label: "Bind Task\nworktree field", type: "process", x: COL_RIGHT, y: 250 },
+      { id: "claim", label: "Teammate Claims\nTask", type: "process", x: COL_CENTER, y: 370 },
+      { id: "cwd", label: "Tool CWD =\n.worktrees/name", type: "subprocess", x: COL_CENTER, y: 480 },
+      { id: "closeout", label: "keep or remove?", type: "decision", x: COL_CENTER, y: 590 },
+      { id: "events", label: "events.jsonl", type: "end", x: COL_RIGHT, y: 690 },
+    ],
+    edges: [
+      { from: "task", to: "validate" },
+      { from: "validate", to: "create", label: "valid" },
+      { from: "create", to: "bind" },
+      { from: "bind", to: "claim" },
+      { from: "claim", to: "cwd" },
+      { from: "cwd", to: "closeout" },
+      { from: "closeout", to: "events", label: "keep/remove" },
+    ],
+  },
 };
 
 export function getFlowForVersion(version: string): FlowDefinition | null {

@@ -1,5 +1,5 @@
 export const VERSION_ORDER = [
-  "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09", "s10", "s11", "s12", "s13", "s14", "s15", "s16"
+  "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09", "s10", "s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18"
 ] as const;
 
 export const LEARNING_PATH = VERSION_ORDER;
@@ -30,6 +30,8 @@ export const VERSION_META: Record<string, {
   s14: { title: "Cron Scheduler", subtitle: "Producing Work on a Schedule", coreAddition: "Scheduled task creation", keyInsight: "Recurring work should be created by the harness, not remembered by the model.", layer: "concurrency", prevVersion: "s13" },
   s15: { title: "Agent Teams", subtitle: "One Agent Isn't Enough", coreAddition: "MessageBus + teammate threads", keyInsight: "Large work can be split across persistent teammates that communicate through inboxes.", layer: "collaboration", prevVersion: "s14" },
   s16: { title: "Team Protocols", subtitle: "Teammates Need Agreements", coreAddition: "request_id protocols + state tracking", keyInsight: "Request-response protocols turn loose messages into traceable coordination.", layer: "collaboration", prevVersion: "s15" },
+  s17: { title: "Autonomous Agents", subtitle: "Check the Board, Claim the Task", coreAddition: "idle polling + auto-claim", keyInsight: "Teammates become autonomous by looking for safe work whenever they are idle.", layer: "collaboration", prevVersion: "s16" },
+  s18: { title: "Worktree Isolation", subtitle: "Separate Directories, No Conflicts", coreAddition: "task-bound git worktrees", keyInsight: "Tasks own the goal; worktrees own the directory, so teammates can work in parallel safely.", layer: "collaboration", prevVersion: "s17" },
 };
 
 export const LAYERS = [
@@ -37,5 +39,5 @@ export const LAYERS = [
   { id: "planning" as const, label: "Planning & Coordination", color: "#10B981", versions: ["s03", "s04", "s05", "s07"] },
   { id: "memory" as const, label: "Memory Management", color: "#8B5CF6", versions: ["s06"] },
   { id: "concurrency" as const, label: "Concurrency", color: "#F59E0B", versions: ["s08", "s13", "s14"] },
-  { id: "collaboration" as const, label: "Collaboration", color: "#EF4444", versions: ["s09", "s10", "s11", "s12", "s15", "s16"] },
+  { id: "collaboration" as const, label: "Collaboration", color: "#EF4444", versions: ["s09", "s10", "s11", "s12", "s15", "s16", "s17", "s18"] },
 ] as const;

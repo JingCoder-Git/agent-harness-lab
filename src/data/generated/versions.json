@@ -458,6 +458,58 @@
       ],
       "layer": "collaboration",
       "source": "type ProtocolType =\n  | \"message\"\n  | \"shutdown_request\"\n  | \"shutdown_response\"\n  | \"plan_approval_request\"\n  | \"plan_approval_response\";\n\ntype ProtocolMessage = {\n  from: string;\n  to: string;\n  type: ProtocolType;\n  content: string;\n  metadata?: { requestId?: string; approve?: boolean };\n};\n\ntype ProtocolState = {\n  requestId: string;\n  type: \"shutdown\" | \"plan_approval\";\n  sender: string;\n  target: string;\n  status: \"pending\" | \"approved\" | \"rejected\";\n  payload: string;\n  createdAt: number;\n};\n\nclass MessageBus {\n  private inboxes = new Map<string, ProtocolMessage[]>();\n\n  send(message: ProtocolMessage) {\n    const inbox = this.inboxes.get(message.to) ?? [];\n    inbox.push(message);\n    this.inboxes.set(message.to, inbox);\n  }\n\n  readInbox(agent: string) {\n    const inbox = this.inboxes.get(agent) ?? [];\n    this.inboxes.delete(agent);\n    return inbox;\n  }\n}\n\nconst bus = new MessageBus();\nconst pendingRequests = new Map<string, ProtocolState>();\n\nfunction newRequestId() {\n  return `req_${String(pendingRequests.size + 1).padStart(6, \"0\")}`;\n}\n\nfunction matchResponse(responseType: ProtocolType, requestId: string, approve: boolean) {\n  const state = pendingRequests.get(requestId);\n  if (!state || state.status !== \"pending\") return;\n  if (state.type === \"shutdown\" && responseType !== \"shutdown_response\") return;\n  if (state.type === \"plan_approval\" && responseType !== \"plan_approval_response\") return;\n\n  state.status = approve ? \"approved\" : \"rejected\";\n}\n\nfunction requestShutdown(teammate: string) {\n  const requestId = newRequestId();\n  pendingRequests.set(requestId, {\n    requestId,\n    type: \"shutdown\",\n    sender: \"lead\",\n    target: teammate,\n    status: \"pending\",\n    payload: \"Please finish current work and shut down.\",\n    createdAt: Date.now(),\n  });\n  bus.send({\n    from: \"lead\",\n    to: teammate,\n    type: \"shutdown_request\",\n    content: \"Please shut down gracefully.\",\n    metadata: { requestId },\n  });\n  return requestId;\n}\n\nfunction submitPlan(from: string, plan: string) {\n  const requestId = newRequestId();\n  pendingRequests.set(requestId, {\n    requestId,\n    type: \"plan_approval\",\n    sender: from,\n    target: \"lead\",\n    status: \"pending\",\n    payload: plan,\n    createdAt: Date.now(),\n  });\n  bus.send({\n    from,\n    to: \"lead\",\n    type: \"plan_approval_request\",\n    content: plan,\n    metadata: { requestId },\n  });\n  return requestId;\n}\n\nfunction dispatchMessage(agent: string, message: ProtocolMessage) {\n  const requestId = message.metadata?.requestId ?? \"\";\n\n  if (message.type === \"shutdown_request\") {\n    bus.send({\n      from: agent,\n      to: \"lead\",\n      type: \"shutdown_response\",\n      content: \"Shutdown approved.\",\n      metadata: { requestId, approve: true },\n    });\n    return \"stop\";\n  }\n\n  if (message.type === \"plan_approval_response\") {\n    return message.metadata?.approve ? \"plan approved\" : \"plan rejected\";\n  }\n\n  return \"continue\";\n}\n\nfunction consumeLeadInbox() {\n  const messages = bus.readInbox(\"lead\");\n  for (const message of messages) {\n    const requestId = message.metadata?.requestId;\n    if (requestId && message.type.endsWith(\"_response\")) {\n      matchResponse(message.type, requestId, Boolean(message.metadata?.approve));\n    }\n  }\n  return messages;\n}\n\nconst shutdownId = requestShutdown(\"alice\");\nfor (const message of bus.readInbox(\"alice\")) dispatchMessage(\"alice\", message);\nconsumeLeadInbox();\n\nconst planId = submitPlan(\"bob\", \"Refactor auth in three small commits.\");\nbus.send({\n  from: \"lead\",\n  to: \"bob\",\n  type: \"plan_approval_response\",\n  content: \"Approved.\",\n  metadata: { requestId: planId, approve: true },\n});\n\nexport { shutdownId, planId };\n"
+    },
+    {
+      "id": "s17",
+      "filename": "s17_autonomous_agents.ts",
+      "title": "Autonomous Agents",
+      "subtitle": "Check the Board, Claim the Task",
+      "loc": 64,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "idle polling + auto-claim",
+      "keyInsight": "Teammates become autonomous by looking for safe work whenever they are idle.",
+      "classes": [],
+      "functions": [
+        {
+          "name": "createTaskBoard",
+          "signature": "createTaskBoard(initialTasks: Task[])",
+          "startLine": 14
+        },
+        {
+          "name": "reinjectIdentity",
+          "signature": "reinjectIdentity(messages: string[], name: string, role: string)",
+          "startLine": 49
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type TaskStatus = \"pending\" | \"in_progress\" | \"completed\";\n\ntype Task = {\n  id: string;\n  subject: string;\n  status: TaskStatus;\n  owner: string | null;\n  blockedBy: string[];\n};\n\ntype AgentState = \"WORK\" | \"IDLE\" | \"SHUTDOWN\";\ntype InboxMessage = { type: \"message\" | \"shutdown_request\"; content: string };\n\nfunction createTaskBoard(initialTasks: Task[]) {\n  const tasks = new Map(initialTasks.map((task) => [task.id, task]));\n\n  function canStart(task: Task) {\n    return task.blockedBy.every((id) => tasks.get(id)?.status === \"completed\");\n  }\n\n  function scanUnclaimedTasks() {\n    return [...tasks.values()].filter(\n      (task) => task.status === \"pending\" && !task.owner && canStart(task)\n    );\n  }\n\n  function claimTask(taskId: string, owner: string) {\n    const task = tasks.get(taskId);\n    if (!task) return `Task ${taskId} not found`;\n    if (task.status !== \"pending\") return `Task ${taskId} is ${task.status}`;\n    if (task.owner) return `Task ${taskId} already owned by ${task.owner}`;\n    if (!canStart(task)) return `Task ${taskId} is blocked`;\n\n    task.owner = owner;\n    task.status = \"in_progress\";\n    return `Claimed ${task.id} (${task.subject})`;\n  }\n\n  function completeTask(taskId: string) {\n    const task = tasks.get(taskId);\n    if (!task || task.status !== \"in_progress\") return `Cannot complete ${taskId}`;\n    task.status = \"completed\";\n    return `Completed ${task.id}`;\n  }\n\n  return { scanUnclaimedTasks, claimTask, completeTask };\n}\n\nfunction reinjectIdentity(messages: string[], name: string, role: string) {\n  if (messages.length <= 3) {\n    messages.unshift(`<identity>You are ${name}, role: ${role}. Continue your work.</identity>`);\n  }\n}\n\nfunction idlePoll(\n  name: string,\n  inbox: InboxMessage[],\n  board: ReturnType<typeof createTaskBoard>\n): { state: AgentState; taskId?: string } {\n  const shutdown = inbox.find((message) => message.type === \"shutdown_request\");\n  if (shutdown) return { state: \"SHUTDOWN\" };\n\n  const [task] = board.scanUnclaimedTasks();\n  if (!task) return { state: \"IDLE\" };\n\n  const result = board.claimTask(task.id, name);\n  return result.startsWith(\"Claimed\") ? { state: \"WORK\", taskId: task.id } : { state: \"IDLE\" };\n}\n\nconst board = createTaskBoard([\n  { id: \"task-1\", subject: \"Create schema\", status: \"pending\", owner: null, blockedBy: [] },\n  { id: \"task-2\", subject: \"Write API routes\", status: \"pending\", owner: null, blockedBy: [] },\n]);\n\nconst messages: string[] = [];\nreinjectIdentity(messages, \"alice\", \"backend developer\");\nconst next = idlePoll(\"alice\", [], board);\nif (next.taskId) board.completeTask(next.taskId);\n\nexport {};\n"
+    },
+    {
+      "id": "s18",
+      "filename": "s18_worktree_isolation.ts",
+      "title": "Worktree Isolation",
+      "subtitle": "Separate Directories, No Conflicts",
+      "loc": 68,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "task-bound git worktrees",
+      "keyInsight": "Tasks own the goal; worktrees own the directory, so teammates can work in parallel safely.",
+      "classes": [],
+      "functions": [
+        {
+          "name": "validateWorktreeName",
+          "signature": "validateWorktreeName(name: string)",
+          "startLine": 21
+        },
+        {
+          "name": "createWorktreeRuntime",
+          "signature": "createWorktreeRuntime(initialTasks: Task[])",
+          "startLine": 30
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type TaskStatus = \"pending\" | \"in_progress\" | \"completed\";\n\ntype Task = {\n  id: string;\n  subject: string;\n  status: TaskStatus;\n  owner: string | null;\n  blockedBy: string[];\n  worktree?: string;\n};\n\ntype WorktreeEvent = {\n  type: \"create\" | \"keep\" | \"remove\";\n  worktree: string;\n  taskId?: string;\n  timestamp: number;\n};\n\nconst validWorktreeName = /^[A-Za-z0-9._-]{1,64}$/;\n\nfunction validateWorktreeName(name: string) {\n  if (!name) return \"Worktree name cannot be empty\";\n  if (name === \".\" || name === \"..\") return `${name} is not a valid worktree name`;\n  if (!validWorktreeName.test(name)) {\n    return \"Use only letters, digits, dots, underscores, and dashes\";\n  }\n  return null;\n}\n\nfunction createWorktreeRuntime(initialTasks: Task[]) {\n  const tasks = new Map(initialTasks.map((task) => [task.id, task]));\n  const worktrees = new Map<string, { branch: string; path: string; dirtyFiles: number }>();\n  const events: WorktreeEvent[] = [];\n\n  function logEvent(type: WorktreeEvent[\"type\"], worktree: string, taskId?: string) {\n    events.push({ type, worktree, taskId, timestamp: Date.now() });\n  }\n\n  function bindTaskToWorktree(taskId: string, worktree: string) {\n    const task = tasks.get(taskId);\n    if (!task) return `Task ${taskId} not found`;\n    task.worktree = worktree;\n    return `Bound ${taskId} to ${worktree}`;\n  }\n\n  function createWorktree(name: string, taskId?: string) {\n    const error = validateWorktreeName(name);\n    if (error) return { ok: false, error };\n    if (worktrees.has(name)) return { ok: false, error: `Worktree ${name} already exists` };\n\n    worktrees.set(name, { branch: `wt/${name}`, path: `.worktrees/${name}`, dirtyFiles: 0 });\n    if (taskId) bindTaskToWorktree(taskId, name);\n    logEvent(\"create\", name, taskId);\n    return { ok: true, path: `.worktrees/${name}` };\n  }\n\n  function removeWorktree(name: string, discardChanges = false) {\n    const worktree = worktrees.get(name);\n    if (!worktree) return `Worktree ${name} not found`;\n    if (worktree.dirtyFiles > 0 && !discardChanges) {\n      return `Worktree ${name} has changes; keep it or pass discardChanges`;\n    }\n    worktrees.delete(name);\n    logEvent(\"remove\", name);\n    return `Removed ${name}`;\n  }\n\n  function keepWorktree(name: string) {\n    logEvent(\"keep\", name);\n    return `Kept ${name} for review`;\n  }\n\n  return { createWorktree, bindTaskToWorktree, removeWorktree, keepWorktree, events };\n}\n\nconst runtime = createWorktreeRuntime([\n  { id: \"task-auth\", subject: \"Refactor auth\", status: \"pending\", owner: null, blockedBy: [] },\n]);\n\nruntime.createWorktree(\"auth-refactor\", \"task-auth\");\nruntime.keepWorktree(\"auth-refactor\");\n\nexport {};\n"
     }
   ],
   "diffs": [
@@ -636,6 +688,28 @@
       ],
       "newTools": [],
       "locDelta": 67
+    },
+    {
+      "from": "s16",
+      "to": "s17",
+      "newClasses": [],
+      "newFunctions": [
+        "createTaskBoard",
+        "reinjectIdentity"
+      ],
+      "newTools": [],
+      "locDelta": -62
+    },
+    {
+      "from": "s17",
+      "to": "s18",
+      "newClasses": [],
+      "newFunctions": [
+        "validateWorktreeName",
+        "createWorktreeRuntime"
+      ],
+      "newTools": [],
+      "locDelta": 4
     }
   ]
 }

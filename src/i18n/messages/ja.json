@@ -1,10 +1,10 @@
 {
   "meta": { "title": "Agent Harness Lab", "description": "Next.js と Node/TypeScript で AI アプリケーションハーネスを段階的に学ぶ" },
   "nav": { "home": "ホーム", "timeline": "学習パス", "compare": "バージョン比較", "layers": "アーキテクチャ層", "github": "GitHub" },
-  "home": { "hero_title": "Agent Harness Lab", "hero_subtitle": "Next.js と TypeScript の例で、AI モデルを支えるアプリケーション層を STEP ごとに構築します。", "start": "現在の Step を続ける", "core_pattern": "コアパターン", "core_pattern_desc": "AI アプリケーションハーネスは同じループを共有します：モデルを呼び出し、ツールを実行し、結果を返す。実運用ではポリシー、権限、メモリ、ライフサイクル層が重なります。", "learning_path": "STEP パス", "learning_path_desc": "16の段階的レッスン、シンプルなループから協調するエージェントチームまで", "layers_title": "アーキテクチャ層", "layers_desc": "5つの関心事が完全な AI アプリケーションハーネスを構成", "loc": "行", "learn_more": "詳細を見る", "versions_in_layer": "Step", "message_flow": "メッセージの増加", "message_flow_desc": "エージェントループ実行時のメッセージ配列の成長を観察" },
+  "home": { "hero_title": "Agent Harness Lab", "hero_subtitle": "Next.js と TypeScript の例で、AI モデルを支えるアプリケーション層を STEP ごとに構築します。", "start": "現在の Step を続ける", "core_pattern": "コアパターン", "core_pattern_desc": "AI アプリケーションハーネスは同じループを共有します：モデルを呼び出し、ツールを実行し、結果を返す。実運用ではポリシー、権限、メモリ、ライフサイクル層が重なります。", "learning_path": "STEP パス", "learning_path_desc": "18の段階的レッスン、シンプルなループから隔離されたエージェントチームまで", "layers_title": "アーキテクチャ層", "layers_desc": "5つの関心事が完全な AI アプリケーションハーネスを構成", "loc": "行", "learn_more": "詳細を見る", "versions_in_layer": "Step", "message_flow": "メッセージの増加", "message_flow_desc": "エージェントループ実行時のメッセージ配列の成長を観察" },
   "version": { "loc": "行のコード", "tools": "ツール", "new": "新規", "prev": "前のバージョン", "next": "次のバージョン", "view_source": "ソースを見る", "view_diff": "差分を見る", "design_decisions": "設計判断", "whats_new": "新機能", "tutorial": "チュートリアル", "simulator": "エージェントループシミュレーター", "execution_flow": "実行フロー", "architecture": "アーキテクチャ", "concept_viz": "コンセプト可視化", "alternatives": "検討された代替案", "tab_learn": "学習", "tab_simulate": "シミュレーション", "tab_code": "ソースコード", "tab_deep_dive": "詳細分析" },
   "sim": { "play": "再生", "pause": "一時停止", "step": "ステップ", "reset": "リセット", "speed": "速度", "step_of": "/" },
-  "timeline": { "title": "学習パス", "subtitle": "s01からs16へ：段階的エージェント設計", "layer_legend": "レイヤー凡例", "loc_growth": "コード量の推移", "learn_more": "詳細を見る" },
+  "timeline": { "title": "学習パス", "subtitle": "s01からs18へ：段階的エージェント設計", "layer_legend": "レイヤー凡例", "loc_growth": "コード量の推移", "learn_more": "詳細を見る" },
   "layers": {
     "title": "アーキテクチャ層",
     "subtitle": "5つの直交する関心事が完全なエージェントを構成",
@@ -54,7 +54,9 @@
     "s13": "バックグラウンドタスク",
     "s14": "Cron スケジューラー",
     "s15": "エージェントチーム",
-    "s16": "チームプロトコル"
+    "s16": "チームプロトコル",
+    "s17": "自律エージェント",
+    "s18": "Worktree 分離"
   },
   "layer_labels": {
     "tools": "ツールと実行",
@@ -79,6 +81,8 @@
     "s13": "バックグラウンドタスクレーン",
     "s14": "Cron スケジューラー",
     "s15": "エージェントチーム メールボックス",
-    "s16": "リクエスト・レスポンスプロトコル"
+    "s16": "リクエスト・レスポンスプロトコル",
+    "s17": "自律エージェントサイクル",
+    "s18": "Worktree タスク分離"
   }
 }

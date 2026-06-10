@@ -23,6 +23,8 @@ const visualizations: Record<
   s14: lazy(() => import("./s14-cron-scheduler")),
   s15: lazy(() => import("./s09-agent-teams")),
   s16: lazy(() => import("./s10-team-protocols")),
+  s17: lazy(() => import("./s11-autonomous-agents")),
+  s18: lazy(() => import("./s12-worktree-task-isolation")),
 };
 
 export function SessionVisualization({ version }: { version: string }) {
