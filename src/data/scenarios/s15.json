@@ -1,0 +1,44 @@
+{
+  "version": "s15",
+  "title": "Agent Teams",
+  "description": "The lead spawns teammate loops, communicates through inboxes, and injects teammate results back into history.",
+  "steps": [
+    {
+      "type": "user_message",
+      "content": "This backend refactor is too broad for one agent. Create a teammate for the database work.",
+      "annotation": "The user asks for work that exceeds a single agent's attention budget."
+    },
+    {
+      "type": "assistant_text",
+      "content": "I'll spawn a backend teammate and give her the schema task.",
+      "annotation": "The lead decides to delegate to a persistent teammate rather than a one-shot subagent."
+    },
+    {
+      "type": "tool_call",
+      "toolName": "spawn_teammate",
+      "content": "{\"name\":\"alice\",\"role\":\"backend developer\",\"prompt\":\"Create schema.sql with a users table.\"}",
+      "annotation": "The new tool starts a teammate loop with its own messages and prompt."
+    },
+    {
+      "type": "tool_result",
+      "toolName": "spawn_teammate",
+      "content": "Spawned alice as backend developer.",
+      "annotation": "The teammate is now active and has an inbox on the message bus."
+    },
+    {
+      "type": "system_event",
+      "content": "alice reads .mailboxes/alice.jsonl, writes schema.sql, then sends a result to lead.",
+      "annotation": "Teammates work independently and communicate through file-style inboxes."
+    },
+    {
+      "type": "system_event",
+      "content": "lead inbox consumed -> From alice: schema.sql created with users table.",
+      "annotation": "Inbox messages are injected into the lead's history so the model can react."
+    },
+    {
+      "type": "assistant_text",
+      "content": "Alice finished the schema work. I'll use her result in the next step of the refactor.",
+      "annotation": "The lead incorporates teammate output as normal conversation context."
+    }
+  ]
+}

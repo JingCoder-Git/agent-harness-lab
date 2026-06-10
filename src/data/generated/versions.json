@@ -369,6 +369,95 @@
       ],
       "layer": "concurrency",
       "source": "type CronJob = {\n  id: string;\n  cron: string;\n  prompt: string;\n  recurring: boolean;\n  durable: boolean;\n};\n\ntype QueuedRun = {\n  jobId: string;\n  prompt: string;\n  dueAt: Date;\n};\n\nfunction fieldMatches(field: string, value: number): boolean {\n  if (field === \"*\") return true;\n  if (field.includes(\",\")) {\n    return field.split(\",\").some((part) => fieldMatches(part, value));\n  }\n  if (field.includes(\"/\")) {\n    const [range, stepText] = field.split(\"/\");\n    const step = Number(stepText);\n    if (range === \"*\") return value % step === 0;\n    if (range.includes(\"-\")) {\n      const [start, end] = range.split(\"-\").map(Number);\n      return value >= start && value <= end && (value - start) % step === 0;\n    }\n  }\n  if (field.includes(\"-\")) {\n    const [start, end] = field.split(\"-\").map(Number);\n    return value >= start && value <= end;\n  }\n  return Number(field) === value;\n}\n\nfunction cronMatches(cron: string, date: Date): boolean {\n  const [minute, hour, dayOfMonth, month, dayOfWeek] = cron.split(\" \");\n  const domMatches = fieldMatches(dayOfMonth, date.getDate());\n  const dowMatches = fieldMatches(dayOfWeek, date.getDay());\n  const dayMatches =\n    dayOfMonth !== \"*\" && dayOfWeek !== \"*\" ? domMatches || dowMatches : domMatches && dowMatches;\n\n  return (\n    fieldMatches(minute, date.getMinutes()) &&\n    fieldMatches(hour, date.getHours()) &&\n    fieldMatches(month, date.getMonth() + 1) &&\n    dayMatches\n  );\n}\n\nfunction createCronScheduler() {\n  let counter = 0;\n  let jobs: CronJob[] = [];\n  let queue: QueuedRun[] = [];\n\n  function scheduleJob(cron: string, prompt: string, recurring = true) {\n    counter += 1;\n    const job = { id: `cron-${counter}`, cron, prompt, recurring, durable: true };\n    jobs = [...jobs, job];\n    return job;\n  }\n\n  function cancelJob(id: string) {\n    jobs = jobs.filter((job) => job.id !== id);\n  }\n\n  function tick(now: Date) {\n    for (const job of jobs) {\n      if (cronMatches(job.cron, now)) {\n        queue.push({ jobId: job.id, prompt: job.prompt, dueAt: now });\n      }\n    }\n  }\n\n  function consumeQueue() {\n    const due = queue;\n    queue = [];\n    return due;\n  }\n\n  return { scheduleJob, cancelJob, tick, consumeQueue };\n}\n\nconst scheduler = createCronScheduler();\nscheduler.scheduleJob(\"0 9 * * 1-5\", \"Review open pull requests\");\nscheduler.tick(new Date(\"2026-06-03T09:00:00\"));\nscheduler.consumeQueue();\n\nexport {};\n"
+    },
+    {
+      "id": "s15",
+      "filename": "s15_agent_teams.ts",
+      "title": "Agent Teams",
+      "subtitle": "One Agent Isn't Enough",
+      "loc": 59,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "MessageBus + teammate threads",
+      "keyInsight": "Large work can be split across persistent teammates that communicate through inboxes.",
+      "classes": [
+        {
+          "name": "MessageBus",
+          "startLine": 18,
+          "endLine": 31
+        }
+      ],
+      "functions": [
+        {
+          "name": "spawnTeammateThread",
+          "signature": "spawnTeammateThread(name: string, role: string, prompt: string)",
+          "startLine": 37
+        },
+        {
+          "name": "teammateTurn",
+          "signature": "teammateTurn(name: string)",
+          "startLine": 44
+        },
+        {
+          "name": "checkInbox",
+          "signature": "checkInbox()",
+          "startLine": 62
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type MessageType = \"message\" | \"result\";\n\ntype InboxMessage = {\n  from: string;\n  to: string;\n  type: MessageType;\n  content: string;\n  timestamp: number;\n};\n\ntype Teammate = {\n  name: string;\n  role: string;\n  prompt: string;\n  rounds: number;\n};\n\nclass MessageBus {\n  private inboxes = new Map<string, InboxMessage[]>();\n\n  send(from: string, to: string, content: string, type: MessageType = \"message\") {\n    const inbox = this.inboxes.get(to) ?? [];\n    inbox.push({ from, to, type, content, timestamp: Date.now() });\n    this.inboxes.set(to, inbox);\n  }\n\n  readInbox(agent: string) {\n    const inbox = this.inboxes.get(agent) ?? [];\n    this.inboxes.delete(agent);\n    return inbox;\n  }\n}\n\nconst bus = new MessageBus();\nconst activeTeammates = new Map<string, Teammate>();\n\nfunction spawnTeammateThread(name: string, role: string, prompt: string) {\n  const teammate = { name, role, prompt, rounds: 0 };\n  activeTeammates.set(name, teammate);\n  bus.send(\"lead\", name, prompt);\n  return `Spawned ${name} as ${role}`;\n}\n\nfunction teammateTurn(name: string) {\n  const teammate = activeTeammates.get(name);\n  if (!teammate) return `${name} is not active`;\n\n  const inbox = bus.readInbox(name);\n  teammate.rounds += 1;\n\n  const assignment = inbox.map((message) => message.content).join(\"\\n\");\n  const summary = `${name} handled: ${assignment || teammate.prompt}`;\n  bus.send(name, \"lead\", summary, \"result\");\n\n  if (teammate.rounds >= 10) {\n    activeTeammates.delete(name);\n  }\n\n  return summary;\n}\n\nfunction checkInbox() {\n  return bus.readInbox(\"lead\").map((message) => ({\n    from: message.from,\n    type: message.type,\n    content: message.content,\n  }));\n}\n\nspawnTeammateThread(\"alice\", \"backend developer\", \"Create schema.sql\");\nteammateTurn(\"alice\");\ncheckInbox();\n\nexport {};\n"
+    },
+    {
+      "id": "s16",
+      "filename": "s16_team_protocols.ts",
+      "title": "Team Protocols",
+      "subtitle": "Teammates Need Agreements",
+      "loc": 126,
+      "tools": [],
+      "newTools": [],
+      "coreAddition": "request_id protocols + state tracking",
+      "keyInsight": "Request-response protocols turn loose messages into traceable coordination.",
+      "classes": [
+        {
+          "name": "MessageBus",
+          "startLine": 26,
+          "endLine": 39
+        }
+      ],
+      "functions": [
+        {
+          "name": "newRequestId",
+          "signature": "newRequestId()",
+          "startLine": 45
+        },
+        {
+          "name": "matchResponse",
+          "signature": "matchResponse(responseType: ProtocolType, requestId: string, approve: boolean)",
+          "startLine": 49
+        },
+        {
+          "name": "requestShutdown",
+          "signature": "requestShutdown(teammate: string)",
+          "startLine": 58
+        },
+        {
+          "name": "submitPlan",
+          "signature": "submitPlan(from: string, plan: string)",
+          "startLine": 79
+        },
+        {
+          "name": "dispatchMessage",
+          "signature": "dispatchMessage(agent: string, message: ProtocolMessage)",
+          "startLine": 100
+        },
+        {
+          "name": "consumeLeadInbox",
+          "signature": "consumeLeadInbox()",
+          "startLine": 121
+        }
+      ],
+      "layer": "collaboration",
+      "source": "type ProtocolType =\n  | \"message\"\n  | \"shutdown_request\"\n  | \"shutdown_response\"\n  | \"plan_approval_request\"\n  | \"plan_approval_response\";\n\ntype ProtocolMessage = {\n  from: string;\n  to: string;\n  type: ProtocolType;\n  content: string;\n  metadata?: { requestId?: string; approve?: boolean };\n};\n\ntype ProtocolState = {\n  requestId: string;\n  type: \"shutdown\" | \"plan_approval\";\n  sender: string;\n  target: string;\n  status: \"pending\" | \"approved\" | \"rejected\";\n  payload: string;\n  createdAt: number;\n};\n\nclass MessageBus {\n  private inboxes = new Map<string, ProtocolMessage[]>();\n\n  send(message: ProtocolMessage) {\n    const inbox = this.inboxes.get(message.to) ?? [];\n    inbox.push(message);\n    this.inboxes.set(message.to, inbox);\n  }\n\n  readInbox(agent: string) {\n    const inbox = this.inboxes.get(agent) ?? [];\n    this.inboxes.delete(agent);\n    return inbox;\n  }\n}\n\nconst bus = new MessageBus();\nconst pendingRequests = new Map<string, ProtocolState>();\n\nfunction newRequestId() {\n  return `req_${String(pendingRequests.size + 1).padStart(6, \"0\")}`;\n}\n\nfunction matchResponse(responseType: ProtocolType, requestId: string, approve: boolean) {\n  const state = pendingRequests.get(requestId);\n  if (!state || state.status !== \"pending\") return;\n  if (state.type === \"shutdown\" && responseType !== \"shutdown_response\") return;\n  if (state.type === \"plan_approval\" && responseType !== \"plan_approval_response\") return;\n\n  state.status = approve ? \"approved\" : \"rejected\";\n}\n\nfunction requestShutdown(teammate: string) {\n  const requestId = newRequestId();\n  pendingRequests.set(requestId, {\n    requestId,\n    type: \"shutdown\",\n    sender: \"lead\",\n    target: teammate,\n    status: \"pending\",\n    payload: \"Please finish current work and shut down.\",\n    createdAt: Date.now(),\n  });\n  bus.send({\n    from: \"lead\",\n    to: teammate,\n    type: \"shutdown_request\",\n    content: \"Please shut down gracefully.\",\n    metadata: { requestId },\n  });\n  return requestId;\n}\n\nfunction submitPlan(from: string, plan: string) {\n  const requestId = newRequestId();\n  pendingRequests.set(requestId, {\n    requestId,\n    type: \"plan_approval\",\n    sender: from,\n    target: \"lead\",\n    status: \"pending\",\n    payload: plan,\n    createdAt: Date.now(),\n  });\n  bus.send({\n    from,\n    to: \"lead\",\n    type: \"plan_approval_request\",\n    content: plan,\n    metadata: { requestId },\n  });\n  return requestId;\n}\n\nfunction dispatchMessage(agent: string, message: ProtocolMessage) {\n  const requestId = message.metadata?.requestId ?? \"\";\n\n  if (message.type === \"shutdown_request\") {\n    bus.send({\n      from: agent,\n      to: \"lead\",\n      type: \"shutdown_response\",\n      content: \"Shutdown approved.\",\n      metadata: { requestId, approve: true },\n    });\n    return \"stop\";\n  }\n\n  if (message.type === \"plan_approval_response\") {\n    return message.metadata?.approve ? \"plan approved\" : \"plan rejected\";\n  }\n\n  return \"continue\";\n}\n\nfunction consumeLeadInbox() {\n  const messages = bus.readInbox(\"lead\");\n  for (const message of messages) {\n    const requestId = message.metadata?.requestId;\n    if (requestId && message.type.endsWith(\"_response\")) {\n      matchResponse(message.type, requestId, Boolean(message.metadata?.approve));\n    }\n  }\n  return messages;\n}\n\nconst shutdownId = requestShutdown(\"alice\");\nfor (const message of bus.readInbox(\"alice\")) dispatchMessage(\"alice\", message);\nconsumeLeadInbox();\n\nconst planId = submitPlan(\"bob\", \"Refactor auth in three small commits.\");\nbus.send({\n  from: \"lead\",\n  to: \"bob\",\n  type: \"plan_approval_response\",\n  content: \"Approved.\",\n  metadata: { requestId: planId, approve: true },\n});\n\nexport { shutdownId, planId };\n"
     }
   ],
   "diffs": [
@@ -518,6 +607,35 @@
       ],
       "newTools": [],
       "locDelta": 23
+    },
+    {
+      "from": "s14",
+      "to": "s15",
+      "newClasses": [
+        "MessageBus"
+      ],
+      "newFunctions": [
+        "spawnTeammateThread",
+        "teammateTurn",
+        "checkInbox"
+      ],
+      "newTools": [],
+      "locDelta": -18
+    },
+    {
+      "from": "s15",
+      "to": "s16",
+      "newClasses": [],
+      "newFunctions": [
+        "newRequestId",
+        "matchResponse",
+        "requestShutdown",
+        "submitPlan",
+        "dispatchMessage",
+        "consumeLeadInbox"
+      ],
+      "newTools": [],
+      "locDelta": 67
     }
   ]
 }

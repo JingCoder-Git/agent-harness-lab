@@ -141,6 +141,18 @@ function normalizeLegacyDocs(content: string): string {
     .replace(
       /images\/cron-scheduler-overview(\.en|\.ja)?\.svg/g,
       "/course-assets/s14_cron_scheduler/cron-scheduler-overview$1.svg"
+    )
+    .replace(
+      /images\/agent-teams-overview(\.en|\.ja)?\.svg/g,
+      "/course-assets/s15_agent_teams/agent-teams-overview$1.svg"
+    )
+    .replace(
+      /images\/team-topology(\.en|\.ja)?\.svg/g,
+      "/course-assets/s15_agent_teams/team-topology$1.svg"
+    )
+    .replace(
+      /images\/team-protocols-overview(\.en|\.ja)?\.svg/g,
+      "/course-assets/s16_team_protocols/team-protocols-overview$1.svg"
     );
 }
 

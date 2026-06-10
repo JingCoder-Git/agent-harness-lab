@@ -1,0 +1,47 @@
+{
+  "version": "s15",
+  "decisions": [
+    {
+      "id": "file-backed-inboxes",
+      "title": "Use Inboxes Instead of Shared Memory",
+      "description": "Each teammate communicates through a mailbox owned by the recipient. This makes handoff explicit, observable, and compatible with agents running in separate loops.",
+      "alternatives": "A shared in-memory queue is shorter for a demo, but it hides the communication boundary and disappears when processes split apart.",
+      "zh": {
+        "title": "用收件箱代替共享内存",
+        "description": "每个队友通过接收方拥有的 mailbox 通信。这样交接是显式、可观察的，也适合运行在独立循环中的 Agent。"
+      },
+      "ja": {
+        "title": "共有メモリではなく受信箱を使う",
+        "description": "各チームメイトは受信者が所有する mailbox で通信します。引き渡しが明示的で観察可能になり、別々のループで動くエージェントにも合います。"
+      }
+    },
+    {
+      "id": "persistent-teammate-loop",
+      "title": "A Teammate Has Its Own Loop",
+      "description": "A teammate is not just a helper function. It has its own prompt, messages, inbox reads, tool calls, and result reporting, so it can keep working independently of the lead.",
+      "alternatives": "One-shot subagents are useful for isolated questions, but they cannot receive later messages or collaborate across multiple turns.",
+      "zh": {
+        "title": "队友拥有自己的循环",
+        "description": "队友不只是一个辅助函数。它有自己的 prompt、messages、inbox 读取、工具调用和结果汇报，因此可以独立于 Lead 持续工作。"
+      },
+      "ja": {
+        "title": "チームメイトは独自のループを持つ",
+        "description": "チームメイトは単なるヘルパー関数ではありません。独自の prompt、messages、受信箱読み取り、ツール呼び出し、結果報告を持つため、Lead から独立して作業を続けられます。"
+      }
+    },
+    {
+      "id": "inbox-injection",
+      "title": "Inject Teammate Results Into History",
+      "description": "The lead consumes its inbox and turns teammate messages into conversation context. The model can then plan from teammate results without needing a separate side channel.",
+      "alternatives": "Printing teammate output to the console is easier, but the model would not see it and could not use it for the next decision.",
+      "zh": {
+        "title": "把队友结果注入历史",
+        "description": "Lead 消费自己的 inbox，并把队友消息转成对话上下文。这样模型可以基于队友结果继续规划，而不需要额外旁路。"
+      },
+      "ja": {
+        "title": "チームメイトの結果を履歴に注入する",
+        "description": "Lead は自分の受信箱を消費し、チームメイトのメッセージを会話コンテキストに変換します。モデルは別のサイドチャネルなしに、その結果を使って次の判断ができます。"
+      }
+    }
+  ]
+}

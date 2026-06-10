@@ -366,6 +366,49 @@ export const EXECUTION_FLOWS: Record<string, FlowDefinition> = {
       { from: "append", to: "llm" },
     ],
   },
+  s15: {
+    nodes: [
+      { id: "start", label: "User Input", type: "start", x: COL_CENTER, y: 30 },
+      { id: "llm", label: "LLM Call\n(team lead)", type: "process", x: COL_CENTER, y: 110 },
+      { id: "tool_check", label: "team tool?", type: "decision", x: COL_CENTER, y: 200 },
+      { id: "spawn", label: "Spawn Teammate\n(own loop)", type: "subprocess", x: COL_LEFT, y: 300 },
+      { id: "mailbox", label: "MessageBus\n.jsonl inbox", type: "process", x: COL_LEFT, y: 390 },
+      { id: "teammate", label: "Teammate Turn\n(read inbox)", type: "process", x: COL_RIGHT, y: 390 },
+      { id: "result", label: "Send Result\nto Lead", type: "subprocess", x: COL_RIGHT, y: 500 },
+      { id: "inject", label: "Inject Inbox\ninto History", type: "process", x: COL_CENTER, y: 590 },
+      { id: "end", label: "Output", type: "end", x: COL_RIGHT, y: 300 },
+    ],
+    edges: [
+      { from: "start", to: "llm" },
+      { from: "llm", to: "tool_check" },
+      { from: "tool_check", to: "spawn", label: "yes" },
+      { from: "tool_check", to: "end", label: "no" },
+      { from: "spawn", to: "mailbox" },
+      { from: "mailbox", to: "teammate" },
+      { from: "teammate", to: "result" },
+      { from: "result", to: "inject" },
+      { from: "inject", to: "llm" },
+    ],
+  },
+  s16: {
+    nodes: [
+      { id: "start", label: "Protocol Request", type: "start", x: COL_CENTER, y: 30 },
+      { id: "state", label: "Create\nProtocolState", type: "process", x: COL_CENTER, y: 120 },
+      { id: "send", label: "Send Message\nwith request_id", type: "subprocess", x: COL_LEFT, y: 220 },
+      { id: "dispatch", label: "Dispatch by\nmessage type", type: "decision", x: COL_RIGHT, y: 220 },
+      { id: "response", label: "Send Response\nsame request_id", type: "subprocess", x: COL_RIGHT, y: 340 },
+      { id: "match", label: "match_response\n(type check)", type: "process", x: COL_CENTER, y: 460 },
+      { id: "resolved", label: "pending ->\napproved/rejected", type: "end", x: COL_CENTER, y: 570 },
+    ],
+    edges: [
+      { from: "start", to: "state" },
+      { from: "state", to: "send" },
+      { from: "send", to: "dispatch" },
+      { from: "dispatch", to: "response", label: "handler" },
+      { from: "response", to: "match" },
+      { from: "match", to: "resolved" },
+    ],
+  },
 };
 
 export function getFlowForVersion(version: string): FlowDefinition | null {

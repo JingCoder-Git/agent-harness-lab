@@ -1,10 +1,10 @@
 {
   "meta": { "title": "Agent Harness Lab", "description": "A step-by-step Next.js and Node.js course for building AI application harnesses" },
   "nav": { "home": "Home", "timeline": "Timeline", "compare": "Compare", "layers": "Layers", "github": "GitHub" },
-  "home": { "hero_title": "Agent Harness Lab", "hero_subtitle": "Build the application layer around an AI model, one STEP at a time, with Next.js and TypeScript examples.", "start": "Continue Current Step", "core_pattern": "The Core Pattern", "core_pattern_desc": "Every AI application harness shares the same loop: call the model, execute tools, feed results back. Production systems add policy, permissions, memory, and lifecycle layers on top.", "learning_path": "STEP Path", "learning_path_desc": "14 progressive lessons, from a simple loop to scheduled autonomous work", "layers_title": "Architecture Layers", "layers_desc": "Five concerns that compose into a complete AI application harness", "loc": "LOC", "learn_more": "Learn More", "versions_in_layer": "steps", "message_flow": "Message Growth", "message_flow_desc": "Watch the messages array grow as the agent loop executes" },
+  "home": { "hero_title": "Agent Harness Lab", "hero_subtitle": "Build the application layer around an AI model, one STEP at a time, with Next.js and TypeScript examples.", "start": "Continue Current Step", "core_pattern": "The Core Pattern", "core_pattern_desc": "Every AI application harness shares the same loop: call the model, execute tools, feed results back. Production systems add policy, permissions, memory, and lifecycle layers on top.", "learning_path": "STEP Path", "learning_path_desc": "16 progressive lessons, from a simple loop to coordinated agent teams", "layers_title": "Architecture Layers", "layers_desc": "Five concerns that compose into a complete AI application harness", "loc": "LOC", "learn_more": "Learn More", "versions_in_layer": "steps", "message_flow": "Message Growth", "message_flow_desc": "Watch the messages array grow as the agent loop executes" },
   "version": { "loc": "lines of code", "tools": "tools", "new": "New", "prev": "Previous", "next": "Next", "view_source": "View Source", "view_diff": "View Diff", "design_decisions": "Design Decisions", "whats_new": "What's New", "tutorial": "Tutorial", "simulator": "Agent Loop Simulator", "execution_flow": "Execution Flow", "architecture": "Architecture", "concept_viz": "Concept Visualization", "alternatives": "Alternatives Considered", "tab_learn": "Learn", "tab_simulate": "Simulate", "tab_code": "Code", "tab_deep_dive": "Deep Dive" },
   "sim": { "play": "Play", "pause": "Pause", "step": "Step", "reset": "Reset", "speed": "Speed", "step_of": "of" },
-  "timeline": { "title": "Learning Path", "subtitle": "s01 to s14: Progressive Agent Design", "layer_legend": "Layer Legend", "loc_growth": "LOC Growth", "learn_more": "Learn More" },
+  "timeline": { "title": "Learning Path", "subtitle": "s01 to s16: Progressive Agent Design", "layer_legend": "Layer Legend", "loc_growth": "LOC Growth", "learn_more": "Learn More" },
   "layers": {
     "title": "Architectural Layers",
     "subtitle": "Five orthogonal concerns that compose into a complete agent",
@@ -52,7 +52,9 @@
     "s11": "Autonomous Agents",
     "s12": "Worktree + Task Isolation",
     "s13": "Background Tasks",
-    "s14": "Cron Scheduler"
+    "s14": "Cron Scheduler",
+    "s15": "Agent Teams",
+    "s16": "Team Protocols"
   },
   "layer_labels": {
     "tools": "Tools & Execution",
@@ -75,6 +77,8 @@
     "s11": "Autonomous Agent Cycle",
     "s12": "Worktree Task Isolation",
     "s13": "Background Task Lanes",
-    "s14": "Cron Scheduler"
+    "s14": "Cron Scheduler",
+    "s15": "Agent Team Mailboxes",
+    "s16": "Request-Response Protocols"
   }
 }

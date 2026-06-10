@@ -1,0 +1,47 @@
+{
+  "version": "s16",
+  "decisions": [
+    {
+      "id": "request-id-correlation",
+      "title": "Every Protocol Request Gets a request_id",
+      "description": "The same request_id travels out with the request and back with the response. That lets the lead correlate replies even when several protocol exchanges are in flight.",
+      "alternatives": "Matching by sender and message type works only when one request is active; concurrent teams need explicit correlation.",
+      "zh": {
+        "title": "每个协议请求都有 request_id",
+        "description": "同一个 request_id 随请求发出，并随响应返回。这样即使多个协议交换同时进行，Lead 也能关联对应回复。"
+      },
+      "ja": {
+        "title": "各プロトコル要求に request_id を付ける",
+        "description": "同じ request_id が要求と一緒に送られ、応答と一緒に戻ります。複数のプロトコル交換が同時に進んでも、Lead は対応する応答を関連付けられます。"
+      }
+    },
+    {
+      "id": "type-checked-responses",
+      "title": "Responses Must Match the Protocol Type",
+      "description": "match_response validates both request_id and response type, so a shutdown response cannot accidentally approve a plan review or another unrelated request.",
+      "alternatives": "Updating state by request_id alone is shorter, but a malformed or misrouted message could resolve the wrong protocol.",
+      "zh": {
+        "title": "响应必须匹配协议类型",
+        "description": "match_response 同时校验 request_id 和响应类型，因此 shutdown 响应不会意外批准计划评审或其他无关请求。"
+      },
+      "ja": {
+        "title": "応答はプロトコル種別と一致する必要がある",
+        "description": "match_response は request_id と応答種別の両方を検証するため、shutdown 応答が誤って計画レビューや別の要求を承認することはありません。"
+      }
+    },
+    {
+      "id": "unified-inbox-routing",
+      "title": "Route Protocol Messages Before Injection",
+      "description": "The lead uses one inbox consumer that first updates protocol state, then returns messages for history injection. A message cannot be consumed without resolving its protocol side effect.",
+      "alternatives": "Separate check_inbox and protocol handlers are easy to drift apart, especially once the same inbox is read in multiple places.",
+      "zh": {
+        "title": "先路由协议消息，再注入历史",
+        "description": "Lead 使用统一 inbox consumer，先更新协议状态，再返回消息用于 history 注入。消息不会被消费后却没有触发协议副作用。"
+      },
+      "ja": {
+        "title": "履歴注入の前にプロトコルメッセージをルーティングする",
+        "description": "Lead は単一の inbox consumer を使い、まずプロトコル状態を更新してから履歴注入用のメッセージを返します。メッセージが消費されたのに副作用が反映されない状況を防ぎます。"
+      }
+    }
+  ]
+}

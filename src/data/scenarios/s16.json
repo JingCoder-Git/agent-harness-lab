@@ -1,0 +1,44 @@
+{
+  "version": "s16",
+  "title": "Team Protocols",
+  "description": "Structured request-response messages use request_id correlation and protocol state transitions.",
+  "steps": [
+    {
+      "type": "user_message",
+      "content": "Ask Alice to shut down gracefully after she finishes her current file.",
+      "annotation": "The user asks for coordination that should be a protocol, not a force kill."
+    },
+    {
+      "type": "assistant_text",
+      "content": "I'll send a shutdown request and track it until Alice confirms.",
+      "annotation": "The lead creates explicit protocol state before sending the message."
+    },
+    {
+      "type": "tool_call",
+      "toolName": "request_shutdown",
+      "content": "{\"teammate\":\"alice\"}",
+      "annotation": "The request creates a pending ProtocolState with a request_id."
+    },
+    {
+      "type": "tool_result",
+      "toolName": "request_shutdown",
+      "content": "Sent shutdown_request to alice with request_id req_000142.",
+      "annotation": "The outgoing message carries the correlation ID."
+    },
+    {
+      "type": "system_event",
+      "content": "alice dispatch_message(shutdown_request) -> shutdown_response(request_id=req_000142, approve=true)",
+      "annotation": "The teammate routes by message type and replies with the same request_id."
+    },
+    {
+      "type": "system_event",
+      "content": "lead match_response(req_000142) -> pending_requests[req_000142].status = approved",
+      "annotation": "The lead matches and validates the response before resolving protocol state."
+    },
+    {
+      "type": "assistant_text",
+      "content": "Alice confirmed shutdown. The protocol state is now approved.",
+      "annotation": "The final answer can cite a concrete handshake result."
+    }
+  ]
+}
