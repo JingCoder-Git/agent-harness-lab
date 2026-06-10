@@ -42,71 +42,81 @@ s06 的子 Agent 是临时工，叫来干一件事就走了。但有些任务需
 
 每个 Agent（包括 Lead 和队友）有一个 `.jsonl` 邮箱。发消息 = 往对方的文件里 append 一行 JSON。读消息 = 读文件 + 删除（消费式）：
 
-```python
-class MessageBus:
-    def send(self, from_agent: str, to_agent: str,
-             content: str, msg_type: str = "message"):
-        msg = {"from": from_agent, "to": to_agent,
-               "content": content, "type": msg_type,
-               "ts": time.time()}
-        inbox = MAILBOX_DIR / f"{to_agent}.jsonl"
-        with open(inbox, "a") as f:
-            f.write(json.dumps(msg) + "\n")
+```ts
+type MessageType = 'message' | 'result';
+type InboxMessage = {
+  from: string;
+  to: string;
+  content: string;
+  type: MessageType;
+  timestamp: number;
+};
 
-    def read_inbox(self, agent: str) -> list[dict]:
-        inbox = MAILBOX_DIR / f"{agent}.jsonl"
-        if not inbox.exists():
-            return []
-        msgs = [json.loads(line) for line in inbox.read_text().splitlines()]
-        inbox.unlink()  # 消费式：读完删除
-        return msgs
+class MessageBus {
+  private inboxes = new Map<string, InboxMessage[]>();
+
+  send(from: string, to: string, content: string, type: MessageType = 'message') {
+    const inbox = this.inboxes.get(to) ?? [];
+    inbox.push({ from, to, content, type, timestamp: Date.now() });
+    this.inboxes.set(to, inbox);
+  }
+
+  readInbox(agent: string) {
+    const inbox = this.inboxes.get(agent) ?? [];
+    this.inboxes.delete(agent);
+    return inbox;
+  }
+}
 ```
 
-为什么用文件而不是内存队列？教学版选文件是因为直观、跨线程可观察。真实 CC 也用文件收件箱（`~/.claude/teams/{team}/inboxes/`），但加了 `proper-lockfile` 防并发写冲突。教学版的 `read_inbox` 有 read + unlink 竞态，多线程同时读可能丢消息，对教学场景可以接受。
+为什么用文件而不是内存队列？教学版选文件是因为直观、跨线程可观察。真实 CC 也用文件收件箱（`~/.claude/teams/{team}/inboxes/`），但加了 `proper-lockfile` 防并发写冲突。教学版的 `readInbox` 有 read + unlink 竞态，多线程同时读可能丢消息，对教学场景可以接受。
 
 ### spawn_teammate_thread: 启动队友
 
 Lead 调用 `spawn_teammate` 工具启动一个队友。队友跑在自己的 daemon 线程里，有自己的 system prompt、自己的 messages、自己的简化工具集：
 
-```python
-def spawn_teammate_thread(name: str, role: str, prompt: str) -> str:
-    system = f"You are '{name}', a {role}. Use tools to complete tasks."
+```ts
+function spawnTeammateThread(name: string, role: string, prompt: string) {
+  const system = `You are '${name}', a ${role}. Use tools to complete tasks.`;
 
-    def run():
-        messages = [{"role": "user", "content": prompt}]
-        sub_tools = [bash, read_file, write_file, send_message]
-        for _ in range(10):           # 最多 10 轮
-            inbox = BUS.read_inbox(name)
-            if inbox:
-                messages.append({"role": "user",
-                    "content": f"<inbox>{json.dumps(inbox)}</inbox>"})
-            response = client.messages.create(
-                model=MODEL, system=system, messages=messages[-20:],
-                tools=sub_tools, max_tokens=8000)
-            # ... 执行工具、处理结果
-        # 完成后发 summary 给 Lead
-        BUS.send(name, "lead", summary, "result")
+  void (async () => {
+    const messages: Message[] = [{ role: 'user', content: prompt }];
+    const teammateTools = [bashTool, readFileTool, writeFileTool, sendMessageTool];
 
-    threading.Thread(target=run, daemon=True).start()
+    for (let round = 0; round < 10; round += 1) {
+      const inbox = bus.readInbox(name);
+      if (inbox.length > 0) {
+        messages.push({ role: 'user', content: `<inbox>${JSON.stringify(inbox)}</inbox>` });
+      }
+
+      const response = await callModel({ system, messages: messages.slice(-20), tools: teammateTools });
+      await executeTools(response, messages);
+    }
+
+    bus.send(name, 'lead', summarize(messages), 'result');
+  })();
+
+  return `Spawned ${name} as ${role}`;
+}
 ```
 
 关键设计：
 - **队友有简化工具集**：bash、read、write、send_message。教学版省略了任务和 cron，聚焦通信机制。真实 CC 的队友也有 TaskCreate、TaskUpdate 等工具，任务系统是团队共享的
 - **教学版限 10 轮**：防止队友无限循环。真实 CC 用 idle loop：跑完一轮后发 `idle_notification`，等 inbox 消息，收到后继续，直到 `shutdown_request` 才退出
-- **完成后自动汇报**：`BUS.send(name, "lead", summary)` 把最终结果发到 Lead 的收件箱
+- **完成后自动汇报**：`bus.send(name, "lead", summary)` 把最终结果发到 Lead 的收件箱
 
 ### Lead 的 inbox 注入
 
 Lead 在每轮主循环结束后检查收件箱。队友发来的消息注入到 history 里，让 LLM 能看到并做出反应：
 
-```python
-# 主循环结束后
-inbox = BUS.read_inbox("lead")
-if inbox:
-    inbox_text = "\n".join(
-        f"From {m['from']}: {m['content'][:200]}" for m in inbox)
-    history.append({"role": "user",
-                    "content": f"[Inbox]\n{inbox_text}"})
+```ts
+const inbox = bus.readInbox('lead');
+if (inbox.length > 0) {
+  const inboxText = inbox
+    .map((message) => `From ${message.from}: ${message.content.slice(0, 200)}`)
+    .join('\n');
+  history.push({ role: 'user', content: `[Inbox]\n${inboxText}` });
+}
 ```
 
 教学版在用户输入循环外注入。CC 更精细，Lead 的 `useInboxPoller` 每 1 秒检查一次，有消息就提交为新的 turn，不需要等用户输入。
@@ -124,12 +134,12 @@ if inbox:
 
 ```
 1. Lead: "搭建后端：一个人搞不定，组队吧"
-2. Lead → spawn_teammate("alice", "backend dev", "创建数据库 schema")
-3. Lead → spawn_teammate("bob", "frontend dev", "写 API 客户端")
-4. alice 线程启动 → 自己的 LLM 调用 → bash "python manage.py migrate"
-5. bob 线程启动 → 自己的 LLM 调用 → write_file("client.ts", ...)
-6. alice 完成 → BUS.send("alice", "lead", "Schema done: users, orders tables")
-7. bob 完成 → BUS.send("bob", "lead", "Client written with types")
+2. Lead → spawnTeammate("alice", "backend dev", "创建数据库 schema")
+3. Lead → spawnTeammate("bob", "frontend dev", "写 API 客户端")
+4. alice 线程启动 → 自己的 LLM 调用 → bash "npm run migrate"
+5. bob 线程启动 → 自己的 LLM 调用 → writeFile("client.ts", ...)
+6. alice 完成 → bus.send("alice", "lead", "Schema done: users, orders tables")
+7. bob 完成 → bus.send("bob", "lead", "Client written with types")
 8. Lead 下次循环 → inbox 注入 history → LLM 看到 alice 和 bob 的结果
 ```
 

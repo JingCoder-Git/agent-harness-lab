@@ -42,71 +42,81 @@ s06 のサブ Agent は臨時スタッフ、一つの仕事を終えたら去る
 
 各 Agent（Lead とチームメイトを含む）には `.jsonl` 受信箱がある。メッセージ送信 = 相手のファイルに 1 行 JSON を append。メッセージ読み取り = ファイル読み込み + 削除（消費式）：
 
-```python
-class MessageBus:
-    def send(self, from_agent: str, to_agent: str,
-             content: str, msg_type: str = "message"):
-        msg = {"from": from_agent, "to": to_agent,
-               "content": content, "type": msg_type,
-               "ts": time.time()}
-        inbox = MAILBOX_DIR / f"{to_agent}.jsonl"
-        with open(inbox, "a") as f:
-            f.write(json.dumps(msg) + "\n")
+```ts
+type MessageType = 'message' | 'result';
+type InboxMessage = {
+  from: string;
+  to: string;
+  content: string;
+  type: MessageType;
+  timestamp: number;
+};
 
-    def read_inbox(self, agent: str) -> list[dict]:
-        inbox = MAILBOX_DIR / f"{agent}.jsonl"
-        if not inbox.exists():
-            return []
-        msgs = [json.loads(line) for line in inbox.read_text().splitlines()]
-        inbox.unlink()  # 消費式：読んだら削除
-        return msgs
+class MessageBus {
+  private inboxes = new Map<string, InboxMessage[]>();
+
+  send(from: string, to: string, content: string, type: MessageType = 'message') {
+    const inbox = this.inboxes.get(to) ?? [];
+    inbox.push({ from, to, content, type, timestamp: Date.now() });
+    this.inboxes.set(to, inbox);
+  }
+
+  readInbox(agent: string) {
+    const inbox = this.inboxes.get(agent) ?? [];
+    this.inboxes.delete(agent);
+    return inbox;
+  }
+}
 ```
 
-なぜファイルか、メモリキューではなく？教学版がファイルを選ぶ理由は、直感的でスレッドをまたいで観察可能だから。真实 CC もファイル受信箱（`~/.claude/teams/{team}/inboxes/`）を使うが、`proper-lockfile` で並行書き込みの安全性を確保。教学版の `read_inbox` には read + unlink の競合状態があり、マルチスレッド同時読みでメッセージを損失する可能性があるが、教学目的には許容範囲。
+なぜファイルか、メモリキューではなく？教学版がファイルを選ぶ理由は、直感的でスレッドをまたいで観察可能だから。真实 CC もファイル受信箱（`~/.claude/teams/{team}/inboxes/`）を使うが、`proper-lockfile` で並行書き込みの安全性を確保。教学版の `readInbox` には read + unlink の競合状態があり、マルチスレッド同時読みでメッセージを損失する可能性があるが、教学目的には許容範囲。
 
 ### spawn_teammate_thread: チームメイト起動
 
 Lead が `spawn_teammate` ツールを呼び出してチームメイトを起動。チームメイトは独自の daemon スレッドで動作、独自の system prompt、messages、簡易ツールセットを持つ：
 
-```python
-def spawn_teammate_thread(name: str, role: str, prompt: str) -> str:
-    system = f"You are '{name}', a {role}. Use tools to complete tasks."
+```ts
+function spawnTeammateThread(name: string, role: string, prompt: string) {
+  const system = `You are '${name}', a ${role}. Use tools to complete tasks.`;
 
-    def run():
-        messages = [{"role": "user", "content": prompt}]
-        sub_tools = [bash, read_file, write_file, send_message]
-        for _ in range(10):           # 最大 10 ラウンド
-            inbox = BUS.read_inbox(name)
-            if inbox:
-                messages.append({"role": "user",
-                    "content": f"<inbox>{json.dumps(inbox)}</inbox>"})
-            response = client.messages.create(
-                model=MODEL, system=system, messages=messages[-20:],
-                tools=sub_tools, max_tokens=8000)
-            # ... ツール実行、結果処理
-        # 完了後 summary を Lead に送信
-        BUS.send(name, "lead", summary, "result")
+  void (async () => {
+    const messages: Message[] = [{ role: 'user', content: prompt }];
+    const teammateTools = [bashTool, readFileTool, writeFileTool, sendMessageTool];
 
-    threading.Thread(target=run, daemon=True).start()
+    for (let round = 0; round < 10; round += 1) {
+      const inbox = bus.readInbox(name);
+      if (inbox.length > 0) {
+        messages.push({ role: 'user', content: `<inbox>${JSON.stringify(inbox)}</inbox>` });
+      }
+
+      const response = await callModel({ system, messages: messages.slice(-20), tools: teammateTools });
+      await executeTools(response, messages);
+    }
+
+    bus.send(name, 'lead', summarize(messages), 'result');
+  })();
+
+  return `Spawned ${name} as ${role}`;
+}
 ```
 
 重要な設計：
 - **チームメイトの簡易ツールセット**：bash、read、write、send_message。教学版は通信機構に集中するためタスクと cron を省略。真实 CC のチームメイトには TaskCreate、TaskUpdate 等のツールもあり、タスクシステムはチーム全体で共有
 - **教学版は 10 ラウンド制限**：無限ループを防止。真实 CC は idle loop：1 ラウンド終了後に `idle_notification` を送信、inbox メッセージを待機、到着後に再開、`shutdown_request` でのみ終了
-- **完了時自動報告**：`BUS.send(name, "lead", summary)` で最終結果を Lead の受信箱に送信
+- **完了時自動報告**：`bus.send(name, "lead", summary)` で最終結果を Lead の受信箱に送信
 
 ### Lead の inbox 注入
 
 Lead はメインループの各反復後に受信箱を確認。チームメイトからのメッセージを history に注入し、LLM が確認して反応できるようにする：
 
-```python
-# メインループ反復後
-inbox = BUS.read_inbox("lead")
-if inbox:
-    inbox_text = "\n".join(
-        f"From {m['from']}: {m['content'][:200]}" for m in inbox)
-    history.append({"role": "user",
-                    "content": f"[Inbox]\n{inbox_text}"})
+```ts
+const inbox = bus.readInbox('lead');
+if (inbox.length > 0) {
+  const inboxText = inbox
+    .map((message) => `From ${message.from}: ${message.content.slice(0, 200)}`)
+    .join('\n');
+  history.push({ role: 'user', content: `[Inbox]\n${inboxText}` });
+}
 ```
 
 教学版はユーザー入力ループ内で注入。真实 CC はより精密、Lead の `useInboxPoller` が毎秒チェックし、ユーザー入力を待たずにメッセージを新しい turn として送信。
@@ -124,12 +134,12 @@ if inbox:
 
 ```
 1. Lead: "バックエンド構築：一人では無理、チームを組もう"
-2. Lead → spawn_teammate("alice", "backend dev", "データベーススキーマを作成")
-3. Lead → spawn_teammate("bob", "frontend dev", "API クライアントを作成")
-4. alice スレッド起動 → 独自の LLM 呼び出し → bash "python manage.py migrate"
-5. bob スレッド起動 → 独自の LLM 呼び出し → write_file("client.ts", ...)
-6. alice 完了 → BUS.send("alice", "lead", "Schema done: users, orders tables")
-7. bob 完了 → BUS.send("bob", "lead", "Client written with types")
+2. Lead → spawnTeammate("alice", "backend dev", "データベーススキーマを作成")
+3. Lead → spawnTeammate("bob", "frontend dev", "API クライアントを作成")
+4. alice スレッド起動 → 独自の LLM 呼び出し → bash "npm run migrate"
+5. bob スレッド起動 → 独自の LLM 呼び出し → writeFile("client.ts", ...)
+6. alice 完了 → bus.send("alice", "lead", "Schema done: users, orders tables")
+7. bob 完了 → bus.send("bob", "lead", "Client written with types")
 8. Lead 次回反復 → inbox を history に注入 → LLM が alice と bob の結果を確認
 ```
 

@@ -47,41 +47,46 @@ skills/
 
 2. SkillLoader scans for `SKILL.md` files, uses the directory name as the skill identifier.
 
-```python
-class SkillLoader:
-    def __init__(self, skills_dir: Path):
-        self.skills = {}
-        for f in sorted(skills_dir.rglob("SKILL.md")):
-            text = f.read_text()
-            meta, body = self._parse_frontmatter(text)
-            name = meta.get("name", f.parent.name)
-            self.skills[name] = {"meta": meta, "body": body}
+```ts
+type Skill = { meta: Record<string, string>; body: string };
 
-    def get_descriptions(self) -> str:
-        lines = []
-        for name, skill in self.skills.items():
-            desc = skill["meta"].get("description", "")
-            lines.append(f"  - {name}: {desc}")
-        return "\n".join(lines)
+class SkillLoader {
+  private skills = new Map<string, Skill>();
 
-    def get_content(self, name: str) -> str:
-        skill = self.skills.get(name)
-        if not skill:
-            return f"Error: Unknown skill '{name}'."
-        return f"<skill name=\"{name}\">\n{skill['body']}\n</skill>"
+  constructor(private skillsDir: string) {}
+
+  async load() {
+    for (const filePath of await findSkillFiles(this.skillsDir)) {
+      const text = await fs.readFile(filePath, 'utf8');
+      const { meta, body } = parseFrontmatter(text);
+      const name = meta.name ?? path.basename(path.dirname(filePath));
+      this.skills.set(name, { meta, body });
+    }
+  }
+
+  getDescriptions() {
+    return [...this.skills.entries()]
+      .map(([name, skill]) => `  - ${name}: ${skill.meta.description ?? ''}`)
+      .join('\n');
+  }
+
+  getContent(name: string) {
+    return this.skills.get(name)?.body ?? `Skill not found: ${name}`;
+  }
+}
 ```
 
 3. Layer 1 goes into the system prompt. Layer 2 is just another tool handler.
 
-```python
-SYSTEM = f"""You are a coding agent at {WORKDIR}.
+```ts
+const system = `You are a coding agent at ${workdir}.
 Skills available:
-{SKILL_LOADER.get_descriptions()}"""
+${skillLoader.getDescriptions()}`;
 
-TOOL_HANDLERS = {
-    # ...base tools...
-    "load_skill": lambda **kw: SKILL_LOADER.get_content(kw["name"]),
-}
+const toolHandlers: Record<string, ToolHandler> = {
+  ...baseToolHandlers,
+  load_skill: (input) => skillLoader.getContent(String(input.name)),
+};
 ```
 
 The model learns what skills exist (cheap) and loads them when relevant (expensive).

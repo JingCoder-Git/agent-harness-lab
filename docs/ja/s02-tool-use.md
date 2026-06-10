@@ -33,46 +33,59 @@ One lookup replaces any if/elif chain.
 
 1. 各ツールにハンドラ関数を定義する。パスのサンドボックス化でワークスペース外への脱出を防ぐ。
 
-```python
-def safe_path(p: str) -> Path:
-    path = (WORKDIR / p).resolve()
-    if not path.is_relative_to(WORKDIR):
-        raise ValueError(f"Path escapes workspace: {p}")
-    return path
+```ts
+const WORKDIR = process.cwd();
 
-def run_read(path: str, limit: int = None) -> str:
-    text = safe_path(path).read_text()
-    lines = text.splitlines()
-    if limit and limit < len(lines):
-        lines = lines[:limit]
-    return "\n".join(lines)[:50000]
+function safePath(inputPath: string) {
+  const resolved = path.resolve(WORKDIR, inputPath);
+  if (!resolved.startsWith(WORKDIR + path.sep)) {
+    throw new Error(`Path escapes workspace: ${inputPath}`);
+  }
+  return resolved;
+}
+
+async function runRead(filePath: string, limit?: number) {
+  const text = await fs.readFile(safePath(filePath), 'utf8');
+  const lines = text.split('\n');
+  const selected = limit && limit < lines.length ? lines.slice(0, limit) : lines;
+  return selected.join('\n').slice(0, 50_000);
+}
 ```
 
 2. ディスパッチマップがツール名とハンドラを結びつける。
 
-```python
-TOOL_HANDLERS = {
-    "bash":       lambda **kw: run_bash(kw["command"]),
-    "read_file":  lambda **kw: run_read(kw["path"], kw.get("limit")),
-    "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
-    "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"],
-                                        kw["new_text"]),
-}
+```ts
+type ToolHandler = (input: Record<string, unknown>) => Promise<string> | string;
+
+const toolHandlers: Record<string, ToolHandler> = {
+  bash: (input) => runBash(String(input.command)),
+  read_file: (input) => runRead(String(input.path), input.limit as number | undefined),
+  write_file: (input) => runWrite(String(input.path), String(input.content)),
+  edit_file: (input) => runEdit(
+    String(input.path),
+    String(input.oldText),
+    String(input.newText)
+  ),
+};
 ```
 
 3. ループ内で名前によりハンドラをルックアップする。ループ本体はs01から不変。
 
-```python
-for block in response.content:
-    if block.type == "tool_use":
-        handler = TOOL_HANDLERS.get(block.name)
-        output = handler(**block.input) if handler \
-            else f"Unknown tool: {block.name}"
-        results.append({
-            "type": "tool_result",
-            "tool_use_id": block.id,
-            "content": output,
-        })
+```ts
+for (const block of response.content) {
+  if (block.type !== 'tool_use') continue;
+
+  const handler = toolHandlers[block.name];
+  const output = handler
+    ? await handler(block.input as Record<string, unknown>)
+    : `Unknown tool: ${block.name}`;
+
+  results.push({
+    type: 'tool_result',
+    tool_use_id: block.id,
+    content: output,
+  });
+}
 ```
 
 ツール追加 = ハンドラ追加 + スキーマ追加。ループは決して変わらない。

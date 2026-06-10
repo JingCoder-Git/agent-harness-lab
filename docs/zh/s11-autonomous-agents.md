@@ -49,72 +49,84 @@ Identity re-injection after compression:
 
 1. 队友循环分两个阶段: WORK 和 IDLE。LLM 停止调用工具 (或调用了 `idle`) 时, 进入 IDLE。
 
-```python
-def _loop(self, name, role, prompt):
-    while True:
-        # -- WORK PHASE --
-        messages = [{"role": "user", "content": prompt}]
-        for _ in range(50):
-            response = client.messages.create(...)
-            if response.stop_reason != "tool_use":
-                break
-            # execute tools...
-            if idle_requested:
-                break
+```ts
+private async loop(name: string, role: string, prompt: string) {
+  while (true) {
+    const messages: Message[] = [{ role: 'user', content: prompt }];
 
-        # -- IDLE PHASE --
-        self._set_status(name, "idle")
-        resume = self._idle_poll(name, messages)
-        if not resume:
-            self._set_status(name, "shutdown")
-            return
-        self._set_status(name, "working")
+    for (let round = 0; round < 50; round += 1) {
+      const response = await callModel(messages);
+      if (response.stop_reason !== 'tool_use') break;
+      await executeTools(response, messages);
+      if (idleRequested(response)) break;
+    }
+
+    this.setStatus(name, 'idle');
+    const resume = await this.idlePoll(name, messages);
+    if (!resume) {
+      this.setStatus(name, 'shutdown');
+      return;
+    }
+  }
+}
 ```
 
 2. 空闲阶段循环轮询收件箱和任务看板。
 
-```python
-def _idle_poll(self, name, messages):
-    for _ in range(IDLE_TIMEOUT // POLL_INTERVAL):  # 60s / 5s = 12
-        time.sleep(POLL_INTERVAL)
-        inbox = BUS.read_inbox(name)
-        if inbox:
-            messages.append({"role": "user",
-                "content": f"<inbox>{inbox}</inbox>"})
-            return True
-        unclaimed = scan_unclaimed_tasks()
-        if unclaimed:
-            claim_task(unclaimed[0]["id"], name)
-            messages.append({"role": "user",
-                "content": f"<auto-claimed>Task #{unclaimed[0]['id']}: "
-                           f"{unclaimed[0]['subject']}</auto-claimed>"})
-            return True
-    return False  # timeout -> shutdown
+```ts
+private async idlePoll(name: string, messages: Message[]) {
+  for (let tick = 0; tick < IDLE_TIMEOUT / POLL_INTERVAL; tick += 1) {
+    await sleep(POLL_INTERVAL);
+
+    const inbox = await bus.readInbox(name);
+    if (inbox.length > 0) {
+      messages.push({ role: 'user', content: `<inbox>${JSON.stringify(inbox)}</inbox>` });
+      return true;
+    }
+
+    const [task] = await scanUnclaimedTasks();
+    if (task) {
+      await claimTask(task.id, name);
+      messages.push({
+        role: 'user',
+        content: `<auto-claimed>Task #${task.id}: ${task.subject}</auto-claimed>`,
+      });
+      return true;
+    }
+  }
+
+  return false;
+}
 ```
 
 3. 任务看板扫描: 找 pending 状态、无 owner、未被阻塞的任务。
 
-```python
-def scan_unclaimed_tasks() -> list:
-    unclaimed = []
-    for f in sorted(TASKS_DIR.glob("task_*.json")):
-        task = json.loads(f.read_text())
-        if (task.get("status") == "pending"
-                and not task.get("owner")
-                and not task.get("blockedBy")):
-            unclaimed.append(task)
-    return unclaimed
+```ts
+async function scanUnclaimedTasks() {
+  const tasks = [] as Task[];
+  for (const filePath of await listTaskFiles(tasksDir)) {
+    const task = JSON.parse(await fs.readFile(filePath, 'utf8')) as Task;
+    if (task.status === 'pending' && !task.owner && task.blockedBy.length === 0) {
+      tasks.push(task);
+    }
+  }
+  return tasks;
+}
 ```
 
 4. 身份重注入: 上下文过短 (说明发生了压缩) 时, 在开头插入身份块。
 
-```python
-if len(messages) <= 3:
-    messages.insert(0, {"role": "user",
-        "content": f"<identity>You are '{name}', role: {role}, "
-                   f"team: {team_name}. Continue your work.</identity>"})
-    messages.insert(1, {"role": "assistant",
-        "content": f"I am {name}. Continuing."})
+```ts
+if (messages.length <= 3) {
+  messages.unshift({
+    role: 'assistant',
+    content: `I am ${name}. Continuing.`,
+  });
+  messages.unshift({
+    role: 'user',
+    content: `<identity>You are '${name}', role: ${role}, team: ${teamName}. Continue your work.</identity>`,
+  });
+}
 ```
 
 ## 相对 s10 的变更

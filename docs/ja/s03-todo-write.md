@@ -36,41 +36,53 @@
 
 1. TodoManagerはアイテムのリストをステータス付きで保持する。`in_progress`にできるのは同時に1つだけ。
 
-```python
-class TodoManager:
-    def update(self, items: list) -> str:
-        validated, in_progress_count = [], 0
-        for item in items:
-            status = item.get("status", "pending")
-            if status == "in_progress":
-                in_progress_count += 1
-            validated.append({"id": item["id"], "text": item["text"],
-                              "status": status})
-        if in_progress_count > 1:
-            raise ValueError("Only one task can be in_progress")
-        self.items = validated
-        return self.render()
+```ts
+type TodoStatus = 'pending' | 'in_progress' | 'completed';
+type TodoItem = { id: string; text: string; status?: TodoStatus };
+
+class TodoManager {
+  private items: Required<TodoItem>[] = [];
+
+  update(items: TodoItem[]) {
+    let inProgressCount = 0;
+    const validated = items.map((item) => {
+      const status = item.status ?? 'pending';
+      if (status === 'in_progress') inProgressCount += 1;
+      return { id: item.id, text: item.text, status };
+    });
+
+    if (inProgressCount > 1) throw new Error('Only one task can be in_progress');
+    this.items = validated;
+    return this.render();
+  }
+
+  render() {
+    return this.items.map((item) => `[${item.status}] ${item.text}`).join('\n');
+  }
+}
 ```
 
 2. `todo`ツールは他のツールと同様にディスパッチマップに追加される。
 
-```python
-TOOL_HANDLERS = {
-    # ...base tools...
-    "todo": lambda **kw: TODO.update(kw["items"]),
-}
+```ts
+const toolHandlers: Record<string, ToolHandler> = {
+  ...baseToolHandlers,
+  todo: (input) => todoManager.update(input.items as TodoItem[]),
+};
 ```
 
 3. nagリマインダーが、モデルが3ラウンド以上`todo`を呼ばなかった場合にナッジを注入する。
 
-```python
-if rounds_since_todo >= 3 and messages:
-    last = messages[-1]
-    if last["role"] == "user" and isinstance(last.get("content"), list):
-        last["content"].insert(0, {
-            "type": "text",
-            "text": "<reminder>Update your todos.</reminder>",
-        })
+```ts
+if (roundsSinceTodo >= 3 && messages.length > 0) {
+  const last = messages.at(-1);
+  if (last?.role === 'user' && Array.isArray(last.content)) {
+    last.content.unshift({
+      type: 'text',
+      text: '<reminder>Update your todos.</reminder>',
+    });
+  }
+}
 ```
 
 「一度にin_progressは1つだけ」の制約が逐次的な集中を強制し、nagリマインダーが説明責任を生む。

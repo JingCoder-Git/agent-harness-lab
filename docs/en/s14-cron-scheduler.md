@@ -52,8 +52,14 @@ The teaching version implements a minimal queue processor: `agent_lock` tells wh
 Each cron task is a `CronJob` object:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+type CronJob = {
+  id: string;
+  cron: string;
+  prompt: string;
+  recurring: boolean;
+  durable: boolean;
+  lastMinute?: string;
+};
 ```
 
 Cron expression, 5 fields, used by Unix for 50 years:
@@ -68,13 +74,36 @@ min  hour  dom  month  dow
 
 Supports `*`, `*/N`, `N`, `N-M`, `N,M,...`.
 
-### cron_matches: 5-Field Matching
+### cronMatches: 5-Field Matching
 
 Standard cron semantics: minute, hour, month must all match; day-of-month (DOM) and day-of-week (DOW) use OR when both are constrained:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function fieldMatches(field: string, value: number) {
+  if (field === '*') return true;
+  if (field.includes(',')) return field.split(',').some((part) => fieldMatches(part, value));
+  if (field.includes('/')) {
+    const [range, stepText] = field.split('/');
+    const step = Number(stepText);
+    return range === '*' ? value % step === 0 : fieldMatches(range, value) && value % step === 0;
+  }
+  if (field.includes('-')) {
+    const [start, end] = field.split('-').map(Number);
+    return value >= start && value <= end;
+  }
+  return Number(field) === value;
+}
+
+function cronMatches(cron: string, date: Date) {
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = cron.split(' ');
+  const dom = fieldMatches(dayOfMonth, date.getDate());
+  const dow = fieldMatches(dayOfWeek, date.getDay());
+  const day = dayOfMonth !== '*' && dayOfWeek !== '*' ? dom || dow : dom && dow;
+  return fieldMatches(minute, date.getMinutes())
+    && fieldMatches(hour, date.getHours())
+    && fieldMatches(month, date.getMonth() + 1)
+    && day;
+}
 ```
 
 ### Independent Scheduler Thread: 1-Second Polling
@@ -82,30 +111,58 @@ Standard cron semantics: minute, hour, month must all match; day-of-month (DOM) 
 The scheduler runs in an independent daemon thread, not dependent on whether agent_loop is executing. Individual job errors don't kill the entire thread:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function startCronSchedulerLoop(jobs: CronJob[], queue: CronJob[]) {
+  return setInterval(() => {
+    const now = new Date();
+    const minuteMarker = now.toISOString().slice(0, 16);
+
+    for (const job of jobs) {
+      if (job.lastMinute === minuteMarker) continue;
+      if (!cronMatches(job.cron, now)) continue;
+      job.lastMinute = minuteMarker;
+      queue.push(job);
+    }
+  }, 1000);
+}
 ```
 
 Key design:
 - **Independent of agent_loop**: scheduler checks time in background even when agent_loop isn't running
 - **Date-aware minute_marker**: uses `"YYYY-MM-DD HH:MM"` to prevent same-minute double-fire while not skipping on the next day
 - **Per-job try/except**: one bad job doesn't crash the scheduler thread
-- **One-shot jobs**: auto-removed from scheduled_jobs after firing
+- **One-shot jobs**: auto-removed from scheduledJobs after firing
 
 ### Queue Processor + agent_loop: Delivery
 
 The queue processor does not check time. It only starts a turn when queued work exists and the agent is idle:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+async function queueProcessorLoop(queue: CronJob[], agentIsIdle: () => boolean) {
+  while (true) {
+    if (agentIsIdle() && queue.length > 0) {
+      const job = queue.shift()!;
+      await agentLoop([{ role: 'user', content: `[Scheduled] ${job.prompt}` }]);
+    }
+    await sleep(1000);
+  }
+}
 ```
 
 agent_loop also doesn't check time. It only takes fired tasks from `cron_queue` and injects them into messages:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function consumeCronQueue(queue: CronJob[]) {
+  return queue.splice(0).map((job) => ({
+    role: 'user' as const,
+    content: `[Scheduled] ${job.prompt}`,
+  }));
+}
+
+async function agentLoop(messages: Message[]) {
+  messages.unshift(...consumeCronQueue(cronQueue));
+  const response = await callModel(messages);
+  await executeTools(response, messages);
+}
 ```
 
 Producer (scheduler thread), deliverer (queue processor), and consumer (agent_loop) are decoupled via `cron_queue`, `cron_lock`, and `agent_lock`.
@@ -115,8 +172,19 @@ Producer (scheduler thread), deliverer (queue processor), and consumer (agent_lo
 `schedule_job` validates the cron expression before registering, returning an error for invalid input:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function validateCron(cron: string) {
+  const fields = cron.trim().split(/s+/);
+  if (fields.length !== 5) return 'Cron must have five fields';
+  return fields.every(Boolean) ? null : 'Cron fields cannot be empty';
+}
+
+function scheduleJob(cron: string, prompt: string, durable = true) {
+  const error = validateCron(cron);
+  if (error) return { ok: false, error };
+  const job = { id: crypto.randomUUID(), cron, prompt, recurring: true, durable };
+  scheduledJobs.push(job);
+  return { ok: true, job };
+}
 ```
 
 Loading durable jobs from disk also skips invalid expressions, preventing a single bad task from breaking startup.
@@ -132,24 +200,24 @@ Loading durable jobs from disk also skips invalid expressions, preventing a sing
 
 ```
 1. On startup:
-   load_durable_jobs() → restore durable tasks from .scheduled_tasks.json
-   Thread(cron_scheduler_loop, daemon=True).start() → scheduler begins polling
-   Thread(queue_processor_loop, daemon=True).start() → processor waits to deliver
+   loadDurableJobs() → restore durable tasks from .scheduled_tasks.json
+   startCronSchedulerLoop() → scheduler begins polling
+   startQueueProcessorLoop() → processor waits to deliver
 
 2. Register a task:
-   schedule_cron(cron="*/2 * * * *", prompt="run date", durable=True)
-   → CronJob written to scheduled_jobs + .scheduled_tasks.json
+   scheduleCron({ cron: "*/2 * * * *", prompt: "run date", durable: true })
+   → CronJob written to scheduledJobs + .scheduled_tasks.json
 
 3. Every 2 minutes:
-   Scheduler checks → cron_matches returns True → cron_queue.append(job)
-   → queue processor sees idle agent → agent_loop consume_cron_queue
+   Scheduler checks → cronMatches returns true → cronQueue.push(job)
+   → queue processor sees idle agent → agentLoop consumes cronQueue
    → injects "[Scheduled] run date"
    → LLM receives message, runs date command
 
 4. Process shutdown:
-   Scheduler thread stops (daemon=True)
+   Scheduler thread stops (daemon: true)
    .scheduled_tasks.json stays on disk
-   Next startup → load_durable_jobs → tasks restored
+   Next startup → loadDurableJobs → tasks restored
 ```
 
 ---
@@ -160,7 +228,7 @@ Loading durable jobs from disk also skips invalid expressions, preventing a sing
 |-----------|-------------|-------------|
 | Trigger method | User manual trigger | Scheduler thread auto-enqueues |
 | New types | — | CronJob dataclass (id, cron, prompt, recurring, durable) |
-| New functions | — | cron_matches, validate_cron, schedule_job, cancel_job, cron_scheduler_loop, queue_processor_loop |
+| New functions | — | cronMatches, validate_cron, schedule_job, cancel_job, cron_scheduler_loop, queue_processor_loop |
 | New storage | — | .scheduled_tasks.json (durable) + memory (session-only) |
 | Threads | Background execution thread | + Scheduler thread (daemon, 1s polling) + queue processor thread |
 | Queue | background_results | + cron_queue (scheduler writes, queue processor delivers, agent_loop consumes) |

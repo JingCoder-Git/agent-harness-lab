@@ -44,8 +44,13 @@ Agent 的 bash 工具也一样。`pip install torch` 要 10 分钟，`npm run bu
 模型通过 bash 工具的 `run_in_background` 参数显式请求后台执行。如果模型没指定，教学版用关键词启发式兜底：
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function shouldRunBackground(toolName: string, input: { runInBackground?: boolean; command?: string }) {
+  if (toolName !== 'bash') return false;
+  if (input.runInBackground === true) return true;
+
+  const command = input.command ?? '';
+  return /npm install|npm run build|pytest|cargo test/.test(command);
+}
 ```
 
 CC 的 bash 工具 schema 里有 `run_in_background: boolean` 参数（`BashTool.tsx:241`）。模型自己决定哪些命令丢后台，不靠关键词猜。教学版保留启发式作为兜底，但主路径是模型显式请求。
@@ -55,19 +60,38 @@ CC 的 bash 工具 schema 里有 `run_in_background: boolean` 参数（`BashTool
 把工具调用包装成 worker 函数，扔到 daemon 线程里执行。每个后台任务有唯一 ID，状态存在 `background_tasks` 字典里：
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+type BackgroundTask = { id: string; command: string; status: 'running' | 'done'; result?: string };
+const backgroundTasks = new Map<string, BackgroundTask>();
+const backgroundResults: string[] = [];
+
+function startBackgroundTask(command: string, run: () => Promise<string>) {
+  const id = `bg_${String(backgroundTasks.size + 1).padStart(4, '0')}`;
+  backgroundTasks.set(id, { id, command, status: 'running' });
+
+  void run().then((result) => {
+    backgroundTasks.set(id, { id, command, status: 'done', result });
+    backgroundResults.push(`<task_notification id="${id}">${result}</task_notification>`);
+  });
+
+  return `[Background task ${id} started]`;
+}
 ```
 
-返回 `bg_id` 而不是只返回 `[Running in background...]`。`daemon=True` 确保 Agent 进程退出时线程跟着退出。教学版用内存字典追踪状态；真实 CC 有 `LocalShellTaskState`，输出重定向到文件，支持停止任务、读取后续输出等完整生命周期。
+返回 `bg_id` 而不是只返回 `[Running in background...]`。`daemon: true` 确保 Agent 进程退出时线程跟着退出。教学版用内存字典追踪状态；真实 CC 有 `LocalShellTaskState`，输出重定向到文件，支持停止任务、读取后续输出等完整生命周期。
 
 ### collect_background_results: 通知收集
 
 后台任务完成后，收集结果并格式化为 `<task_notification>` 通知：
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function collectBackgroundResults() {
+  const ready = [...backgroundResults];
+  backgroundResults.length = 0;
+  return ready.map((content) => ({
+    role: 'user' as const,
+    content,
+  }));
+}
 ```
 
 通知不复用原始 `tool_use_id`。原始 tool call 已经用占位 `tool_result` 回复了，后台完成是独立事件，用 `task_notification` 格式注入。这符合 Messages API 的工具配对语义：一个 `tool_use` 只对应一个 `tool_result`。
@@ -77,8 +101,21 @@ CC 的 bash 工具 schema 里有 `run_in_background: boolean` 参数（`BashTool
 agent_loop 里，工具执行分两条路，通知和结果合并为一条 user 消息：
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+async function agentLoop(messages: Message[]) {
+  while (true) {
+    messages.push(...collectBackgroundResults());
+
+    const response = await callModel(messages);
+    const toolResults = await executeToolCalls(response, (toolCall) => {
+      if (shouldRunBackground(toolCall.name, toolCall.input)) {
+        return startBackgroundTask(toolCall.input.command, () => runBash(toolCall.input.command));
+      }
+      return runTool(toolCall);
+    });
+
+    messages.push({ role: 'user', content: toolResults });
+  }
+}
 ```
 
 慢操作先回一个带 `bg_id` 的占位 tool_result，LLM 知道这个命令还在跑，可以先做别的事。后台完成后，通知作为独立 text block 和当前轮的 tool_result 一起组成 user 消息。

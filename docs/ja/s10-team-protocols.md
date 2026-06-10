@@ -25,10 +25,10 @@ Shutdown Protocol            Plan Approval Protocol
 Lead             Teammate    Teammate           Lead
   |                 |           |                 |
   |--shutdown_req-->|           |--plan_req------>|
-  | {req_id:"abc"}  |           | {req_id:"xyz"}  |
+  | {requestId:"abc"}  |           | {requestId:"xyz"}  |
   |                 |           |                 |
   |<--shutdown_resp-|           |<--plan_resp-----|
-  | {req_id:"abc",  |           | {req_id:"xyz",  |
+  | {requestId:"abc",  |           | {requestId:"xyz",  |
   |  approve:true}  |           |  approve:true}  |
 
 Shared FSM:
@@ -36,48 +36,58 @@ Shared FSM:
   [pending] --reject---> [rejected]
 
 Trackers:
-  shutdown_requests = {req_id: {target, status}}
-  plan_requests     = {req_id: {from, plan, status}}
+  const shutdownRequests = new Map(requestId, { target, status })
+  const planRequests     = new Map(requestId, { from, plan, status })
 ```
 
 ## 仕組み
 
-1. リーダーがrequest_idを生成し、インボックス経由でシャットダウンを開始する。
+1. リーダーがrequestIdを生成し、インボックス経由でシャットダウンを開始する。
 
-```python
-shutdown_requests = {}
+```ts
+const shutdownRequests = new Map<string, { target: string; status: 'pending' | 'approved' | 'rejected' }>();
 
-def handle_shutdown_request(teammate: str) -> str:
-    req_id = str(uuid.uuid4())[:8]
-    shutdown_requests[req_id] = {"target": teammate, "status": "pending"}
-    BUS.send("lead", teammate, "Please shut down gracefully.",
-             "shutdown_request", {"request_id": req_id})
-    return f"Shutdown request {req_id} sent (status: pending)"
+async function handleShutdownRequest(teammate: string) {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  shutdownRequests.set(requestId, { target: teammate, status: 'pending' });
+  await bus.send('lead', teammate, 'Please shut down gracefully.', 'shutdown_request', {
+    requestId,
+  });
+  return `Shutdown request ${requestId} sent (status: pending)`;
+}
 ```
 
 2. チームメイトがリクエストを受信し、承認または拒否で応答する。
 
-```python
-if tool_name == "shutdown_response":
-    req_id = args["request_id"]
-    approve = args["approve"]
-    shutdown_requests[req_id]["status"] = "approved" if approve else "rejected"
-    BUS.send(sender, "lead", args.get("reason", ""),
-             "shutdown_response",
-             {"request_id": req_id, "approve": approve})
+```ts
+if (toolName === 'shutdown_response') {
+  const requestId = String(args.requestId);
+  const approve = Boolean(args.approve);
+  const request = shutdownRequests.get(requestId);
+  if (request) request.status = approve ? 'approved' : 'rejected';
+
+  await bus.send(sender, 'lead', String(args.reason ?? ''), 'shutdown_response', {
+    requestId,
+    approve,
+  });
+}
 ```
 
-3. プラン承認も同一パターン。チームメイトがプランを提出(request_idを生成)、リーダーがレビュー(同じrequest_idを参照)。
+3. プラン承認も同一パターン。チームメイトがプランを提出(requestIdを生成)、リーダーがレビュー(同じrequestIdを参照)。
 
-```python
-plan_requests = {}
+```ts
+const planRequests = new Map<string, { from: string; status: 'pending' | 'approved' | 'rejected' }>();
 
-def handle_plan_review(request_id, approve, feedback=""):
-    req = plan_requests[request_id]
-    req["status"] = "approved" if approve else "rejected"
-    BUS.send("lead", req["from"], feedback,
-             "plan_approval_response",
-             {"request_id": request_id, "approve": approve})
+async function handlePlanReview(requestId: string, approve: boolean, feedback = '') {
+  const request = planRequests.get(requestId);
+  if (!request) return 'Unknown plan request';
+
+  request.status = approve ? 'approved' : 'rejected';
+  await bus.send('lead', request.from, feedback, 'plan_approval_response', {
+    requestId,
+    approve,
+  });
+}
 ```
 
 1つのFSM、2つの応用。同じ`pending -> approved | rejected`状態機械が、あらゆるリクエスト-レスポンスプロトコルに適用できる。
@@ -89,6 +99,6 @@ def handle_plan_review(request_id, approve, feedback=""):
 | Tools          | 9                | 12 (+shutdown_req/resp +plan)|
 | Shutdown       | Natural exit only| Request-response handshake   |
 | Plan gating    | None             | Submit/review with approval  |
-| Correlation    | None             | request_id per request       |
+| Correlation    | None             | requestId per request       |
 | FSM            | None             | pending -> approved/rejected |
 

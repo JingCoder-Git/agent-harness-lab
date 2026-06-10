@@ -31,7 +31,7 @@ Communication:
               | loop   |    bob.jsonl << {json_line}    |  loop  |
               +--------+                                +--------+
                    ^                                         |
-                   |        BUS.read_inbox("alice")          |
+                   |        BUS.readInbox("alice")          |
                    +---- alice.jsonl -> read + drain ---------+
 ```
 
@@ -39,72 +39,85 @@ Communication:
 
 1. TeammateManagerがconfig.jsonでチーム名簿を管理する。
 
-```python
-class TeammateManager:
-    def __init__(self, team_dir: Path):
-        self.dir = team_dir
-        self.dir.mkdir(exist_ok=True)
-        self.config_path = self.dir / "config.json"
-        self.config = self._load_config()
-        self.threads = {}
+```ts
+type Teammate = { name: string; role: string; status: 'working' | 'idle' };
+
+class TeammateManager {
+  private config: { members: Teammate[] } = { members: [] };
+  private loops = new Map<string, Promise<void>>();
+
+  constructor(private teamDir: string) {}
+}
 ```
 
 2. `spawn()`がチームメイトを作成し、そのエージェントループをスレッドで開始する。
 
-```python
-def spawn(self, name: str, role: str, prompt: str) -> str:
-    member = {"name": name, "role": role, "status": "working"}
-    self.config["members"].append(member)
-    self._save_config()
-    thread = threading.Thread(
-        target=self._teammate_loop,
-        args=(name, role, prompt), daemon=True)
-    thread.start()
-    return f"Spawned teammate '{name}' (role: {role})"
+```ts
+spawn(name: string, role: string, prompt: string) {
+  const member: Teammate = { name, role, status: 'working' };
+  this.config.members.push(member);
+  void this.saveConfig();
+
+  const loop = this.teammateLoop(name, role, prompt);
+  this.loops.set(name, loop);
+  return `Spawned teammate '${name}' (role: ${role})`;
+}
 ```
 
-3. MessageBus: 追記専用のJSONLインボックス。`send()`がJSON行を追記し、`read_inbox()`がすべて読み取ってドレインする。
+3. MessageBus: 追記専用のJSONLインボックス。`send()`がJSON行を追記し、`readInbox()`がすべて読み取ってドレインする。
 
-```python
-class MessageBus:
-    def send(self, sender, to, content, msg_type="message", extra=None):
-        msg = {"type": msg_type, "from": sender,
-               "content": content, "timestamp": time.time()}
-        if extra:
-            msg.update(extra)
-        with open(self.dir / f"{to}.jsonl", "a") as f:
-            f.write(json.dumps(msg) + "\n")
+```ts
+type TeamMessage = {
+  type: string;
+  from: string;
+  content: string;
+  timestamp: number;
+};
 
-    def read_inbox(self, name):
-        path = self.dir / f"{name}.jsonl"
-        if not path.exists(): return "[]"
-        msgs = [json.loads(l) for l in path.read_text().strip().splitlines() if l]
-        path.write_text("")  # drain
-        return json.dumps(msgs, indent=2)
+class MessageBus {
+  constructor(private dir: string) {}
+
+  async send(from: string, to: string, content: string, type = 'message', extra = {}) {
+    const message = { type, from, content, timestamp: Date.now(), ...extra };
+    await fs.appendFile(path.join(this.dir, `${to}.jsonl`), JSON.stringify(message) + '\n');
+  }
+
+  async readInbox(name: string) {
+    const inboxPath = path.join(this.dir, `${name}.jsonl`);
+    if (!existsSync(inboxPath)) return [] as TeamMessage[];
+    const lines = (await fs.readFile(inboxPath, 'utf8')).trim().split('\n').filter(Boolean);
+    await fs.writeFile(inboxPath, '');
+    return lines.map((line) => JSON.parse(line) as TeamMessage);
+  }
+}
 ```
 
 4. 各チームメイトは各LLM呼び出しの前にインボックスを確認し、受信メッセージをコンテキストに注入する。
 
-```python
-def _teammate_loop(self, name, role, prompt):
-    messages = [{"role": "user", "content": prompt}]
-    for _ in range(50):
-        inbox = BUS.read_inbox(name)
-        if inbox != "[]":
-            messages.append({"role": "user",
-                "content": f"<inbox>{inbox}</inbox>"})
-        response = client.messages.create(...)
-        if response.stop_reason != "tool_use":
-            break
-        # execute tools, append results...
-    self._find_member(name)["status"] = "idle"
+```ts
+private async teammateLoop(name: string, role: string, prompt: string) {
+  const messages: Message[] = [{ role: 'user', content: prompt }];
+
+  for (let round = 0; round < 50; round += 1) {
+    const inbox = await bus.readInbox(name);
+    if (inbox.length > 0) {
+      messages.push({ role: 'user', content: `<inbox>${JSON.stringify(inbox)}</inbox>` });
+    }
+
+    const response = await callModel(messages);
+    if (response.stop_reason !== 'tool_use') break;
+    await executeTools(response, messages);
+  }
+
+  this.findMember(name).status = 'idle';
+}
 ```
 
 ## s08からの変更点
 
 | Component      | Before (s08)     | After (s09)                |
 |----------------|------------------|----------------------------|
-| Tools          | 6                | 9 (+spawn/send/read_inbox) |
+| Tools          | 6                | 9 (+spawn/send/readInbox) |
 | Agents         | Single           | Lead + N teammates         |
 | Persistence    | None             | config.json + JSONL inboxes|
 | Threads        | Background cmds  | Full agent loops per thread|

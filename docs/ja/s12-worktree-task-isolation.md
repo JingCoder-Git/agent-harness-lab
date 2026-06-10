@@ -8,7 +8,7 @@
 
 ## 問題
 
-s11までにエージェントはタスクを自律的に確保して完了できるようになった。しかし全タスクが1つの共有ディレクトリで走る。2つのエージェントが同時に異なるモジュールをリファクタリングすると衝突する: 片方が`config.py`を編集し、もう片方も`config.py`を編集し、未コミットの変更が混ざり合い、どちらもクリーンにロールバックできない。
+s11までにエージェントはタスクを自律的に確保して完了できるようになった。しかし全タスクが1つの共有ディレクトリで走る。2つのエージェントが同時に異なるモジュールをリファクタリングすると衝突する: 片方が`config.ts`を編集し、もう片方も`config.ts`を編集し、未コミットの変更が混ざり合い、どちらもクリーンにロールバックできない。
 
 タスクボードは*何をやるか*を追跡するが、*どこでやるか*には関知しない。解決策: 各タスクに専用のgit worktreeディレクトリを与える。タスクが目標を管理し、worktreeが実行コンテキストを管理する。タスクIDで紐付ける。
 
@@ -38,48 +38,54 @@ State machines:
 
 1. **タスクを作成する。** まず目標を永続化する。
 
-```python
-TASKS.create("Implement auth refactor")
-# -> .tasks/task_1.json  status=pending  worktree=""
+```ts
+await tasks.create('Implement auth refactor');
+// -> .tasks/task_1.json  status=pending  worktree=''
 ```
 
 2. **worktreeを作成してタスクに紐付ける。** `task_id`を渡すと、タスクが自動的に`in_progress`に遷移する。
 
-```python
-WORKTREES.create("auth-refactor", task_id=1)
-# -> git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD
-# -> index.json gets new entry, task_1.json gets worktree="auth-refactor"
+```ts
+await worktrees.create('auth-refactor', { taskId: 1 });
+// -> git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD
+// -> index.json gets new entry, task_1.json gets worktree='auth-refactor'
 ```
 
 紐付けは両側に状態を書き込む:
 
-```python
-def bind_worktree(self, task_id, worktree):
-    task = self._load(task_id)
-    task["worktree"] = worktree
-    if task["status"] == "pending":
-        task["status"] = "in_progress"
-    self._save(task)
+```ts
+async function bindWorktree(taskId: number, worktree: string) {
+  const task = await loadTask(taskId);
+  task.worktree = worktree;
+  if (task.status === 'pending') task.status = 'in_progress';
+  await saveTask(task);
+}
 ```
 
 3. **worktree内でコマンドを実行する。** `cwd`が分離ディレクトリを指す。
 
-```python
-subprocess.run(command, shell=True, cwd=worktree_path,
-               capture_output=True, text=True, timeout=300)
+```ts
+await runShell(command, {
+  cwd: worktreePath,
+  timeoutMs: 300_000,
+});
 ```
 
 4. **終了処理。** 2つの選択肢:
-   - `worktree_keep(name)` -- ディレクトリを保持する。
-   - `worktree_remove(name, complete_task=True)` -- ディレクトリを削除し、紐付けられたタスクを完了し、イベントを発行する。1回の呼び出しで後片付けと完了を処理する。
+   - `worktreeKeep(name)` -- ディレクトリを保持する。
+   - `worktreeRemove(name, { completeTask: true })` -- ディレクトリを削除し、紐付けられたタスクを完了し、イベントを発行する。1回の呼び出しで後片付けと完了を処理する。
 
-```python
-def remove(self, name, force=False, complete_task=False):
-    self._run_git(["worktree", "remove", wt["path"]])
-    if complete_task and wt.get("task_id") is not None:
-        self.tasks.update(wt["task_id"], status="completed")
-        self.tasks.unbind_worktree(wt["task_id"])
-        self.events.emit("task.completed", ...)
+```ts
+async function removeWorktree(name: string, options = { force: false, completeTask: false }) {
+  const worktree = await loadWorktree(name);
+  await runGit(['worktree', 'remove', worktree.path, ...(options.force ? ['--force'] : [])]);
+
+  if (options.completeTask && worktree.taskId !== undefined) {
+    await tasks.update(worktree.taskId, { status: 'completed' });
+    await tasks.unbindWorktree(worktree.taskId);
+    events.emit('task.completed', { taskId: worktree.taskId, worktree: name });
+  }
+}
 ```
 
 5. **イベントストリーム。** ライフサイクルの各ステップが`.worktrees/events.jsonl`に記録される:

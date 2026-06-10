@@ -34,54 +34,65 @@ Agent --[spawn A]--[spawn B]--[other work]----
 
 1. BackgroundManager 用线程安全的通知队列追踪任务。
 
-```python
-class BackgroundManager:
-    def __init__(self):
-        self.tasks = {}
-        self._notification_queue = []
-        self._lock = threading.Lock()
+```ts
+type BackgroundTask = { status: 'running' | 'completed'; command: string };
+type Notification = { taskId: string; result: string };
+
+class BackgroundManager {
+  private tasks = new Map<string, BackgroundTask>();
+  private notificationQueue: Notification[] = [];
+}
 ```
 
 2. `run()` 启动守护线程, 立即返回。
 
-```python
-def run(self, command: str) -> str:
-    task_id = str(uuid.uuid4())[:8]
-    self.tasks[task_id] = {"status": "running", "command": command}
-    thread = threading.Thread(
-        target=self._execute, args=(task_id, command), daemon=True)
-    thread.start()
-    return f"Background task {task_id} started"
+```ts
+run(command: string) {
+  const taskId = crypto.randomUUID().slice(0, 8);
+  this.tasks.set(taskId, { status: 'running', command });
+
+  void this.execute(taskId, command);
+  return `Background task ${taskId} started`;
+}
 ```
 
 3. 子进程完成后, 结果进入通知队列。
 
-```python
-def _execute(self, task_id, command):
-    try:
-        r = subprocess.run(command, shell=True, cwd=WORKDIR,
-            capture_output=True, text=True, timeout=300)
-        output = (r.stdout + r.stderr).strip()[:50000]
-    except subprocess.TimeoutExpired:
-        output = "Error: Timeout (300s)"
-    with self._lock:
-        self._notification_queue.append({
-            "task_id": task_id, "result": output[:500]})
+```ts
+private async execute(taskId: string, command: string) {
+  let output: string;
+  try {
+    output = await runShell(command, { cwd: workdir, timeoutMs: 300_000 });
+    output = output.slice(0, 50_000);
+  } catch (error) {
+    output = error instanceof Error ? error.message : 'Unknown background error';
+  }
+
+  this.tasks.set(taskId, { status: 'completed', command });
+  this.notificationQueue.push({ taskId, result: output.slice(0, 500) });
+}
 ```
 
 4. 每次 LLM 调用前排空通知队列。
 
-```python
-def agent_loop(messages: list):
-    while True:
-        notifs = BG.drain_notifications()
-        if notifs:
-            notif_text = "\n".join(
-                f"[bg:{n['task_id']}] {n['result']}" for n in notifs)
-            messages.append({"role": "user",
-                "content": f"<background-results>\n{notif_text}\n"
-                           f"</background-results>"})
-        response = client.messages.create(...)
+```ts
+async function agentLoop(messages: Message[]) {
+  while (true) {
+    const notifications = background.drainNotifications();
+    if (notifications.length > 0) {
+      const text = notifications
+        .map((item) => `[bg:${item.taskId}] ${item.result}`)
+        .join('\n');
+      messages.push({
+        role: 'user',
+        content: `<background-results>\n${text}\n</background-results>`,
+      });
+    }
+
+    const response = await callModel(messages);
+    await executeTools(response, messages);
+  }
+}
 ```
 
 循环保持单线程。只有子进程 I/O 被并行化。

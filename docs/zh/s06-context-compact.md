@@ -46,58 +46,75 @@ continue    [Layer 2: auto_compact]
 
 1. **第一层 -- micro_compact**: 每次 LLM 调用前, 将旧的 tool result 替换为占位符。
 
-```python
-def micro_compact(messages: list) -> list:
-    tool_results = []
-    for i, msg in enumerate(messages):
-        if msg["role"] == "user" and isinstance(msg.get("content"), list):
-            for j, part in enumerate(msg["content"]):
-                if isinstance(part, dict) and part.get("type") == "tool_result":
-                    tool_results.append((i, j, part))
-    if len(tool_results) <= KEEP_RECENT:
-        return messages
-    for _, _, part in tool_results[:-KEEP_RECENT]:
-        if len(part.get("content", "")) > 100:
-            part["content"] = f"[Previous: used {tool_name}]"
-    return messages
+```ts
+function microCompact(messages: Message[]) {
+  const toolResults: ToolResultPart[] = [];
+
+  for (const message of messages) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === 'tool_result') toolResults.push(part);
+    }
+  }
+
+  if (toolResults.length <= KEEP_RECENT) return messages;
+
+  for (const part of toolResults.slice(0, -KEEP_RECENT)) {
+    if (String(part.content ?? '').length > 100) {
+      part.content = `[Previous: used ${part.name ?? 'tool'}]`;
+    }
+  }
+  return messages;
+}
 ```
 
 2. **第二层 -- auto_compact**: token 超过阈值时, 保存完整对话到磁盘, 让 LLM 做摘要。
 
-```python
-def auto_compact(messages: list) -> list:
-    # Save transcript for recovery
-    transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    with open(transcript_path, "w") as f:
-        for msg in messages:
-            f.write(json.dumps(msg, default=str) + "\n")
-    # LLM summarizes
-    response = client.messages.create(
-        model=MODEL,
-        messages=[{"role": "user", "content":
-            "Summarize this conversation for continuity..."
-            + json.dumps(messages, default=str)[:80000]}],
-        max_tokens=2000,
-    )
-    return [
-        {"role": "user", "content": f"[Compressed]\n\n{response.content[0].text}"},
-    ]
+```ts
+async function autoCompact(messages: Message[]) {
+  const transcriptPath = path.join(
+    transcriptDir,
+    `transcript_${Date.now()}.jsonl`
+  );
+  await fs.writeFile(
+    transcriptPath,
+    messages.map((message) => JSON.stringify(message)).join('\n')
+  );
+
+  const response = await client.messages.create({
+    model,
+    messages: [{
+      role: 'user',
+      content: 'Summarize this conversation for continuity...'
+        + JSON.stringify(messages).slice(0, 80_000),
+    }],
+    max_tokens: 2000,
+  });
+
+  return [{ role: 'user', content: `[Compressed]\n\n${response.content[0].text}` }];
+}
 ```
 
 3. **第三层 -- manual compact**: `compact` 工具按需触发同样的摘要机制。
 
 4. 循环整合三层:
 
-```python
-def agent_loop(messages: list):
-    while True:
-        micro_compact(messages)                        # Layer 1
-        if estimate_tokens(messages) > THRESHOLD:
-            messages[:] = auto_compact(messages)       # Layer 2
-        response = client.messages.create(...)
-        # ... tool execution ...
-        if manual_compact:
-            messages[:] = auto_compact(messages)       # Layer 3
+```ts
+async function agentLoop(messages: Message[]) {
+  while (true) {
+    microCompact(messages);                     // Layer 1
+    if (estimateTokens(messages) > THRESHOLD) {
+      messages.splice(0, messages.length, ...(await autoCompact(messages))); // Layer 2
+    }
+
+    const response = await callModel(messages);
+    await executeTools(response, messages);
+
+    if (manualCompactRequested(response)) {
+      messages.splice(0, messages.length, ...(await autoCompact(messages))); // Layer 3
+    }
+  }
+}
 ```
 
 完整历史通过 transcript 保存在磁盘上。信息没有真正丢失, 只是移出了活跃上下文。

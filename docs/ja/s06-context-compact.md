@@ -46,58 +46,75 @@ continue    [Layer 2: auto_compact]
 
 1. **第1層 -- micro_compact**: 各LLM呼び出しの前に、古いツール結果をプレースホルダーに置換する。
 
-```python
-def micro_compact(messages: list) -> list:
-    tool_results = []
-    for i, msg in enumerate(messages):
-        if msg["role"] == "user" and isinstance(msg.get("content"), list):
-            for j, part in enumerate(msg["content"]):
-                if isinstance(part, dict) and part.get("type") == "tool_result":
-                    tool_results.append((i, j, part))
-    if len(tool_results) <= KEEP_RECENT:
-        return messages
-    for _, _, part in tool_results[:-KEEP_RECENT]:
-        if len(part.get("content", "")) > 100:
-            part["content"] = f"[Previous: used {tool_name}]"
-    return messages
+```ts
+function microCompact(messages: Message[]) {
+  const toolResults: ToolResultPart[] = [];
+
+  for (const message of messages) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === 'tool_result') toolResults.push(part);
+    }
+  }
+
+  if (toolResults.length <= KEEP_RECENT) return messages;
+
+  for (const part of toolResults.slice(0, -KEEP_RECENT)) {
+    if (String(part.content ?? '').length > 100) {
+      part.content = `[Previous: used ${part.name ?? 'tool'}]`;
+    }
+  }
+  return messages;
+}
 ```
 
 2. **第2層 -- auto_compact**: トークンが閾値を超えたら、完全なトランスクリプトをディスクに保存し、LLMに要約を依頼する。
 
-```python
-def auto_compact(messages: list) -> list:
-    # Save transcript for recovery
-    transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    with open(transcript_path, "w") as f:
-        for msg in messages:
-            f.write(json.dumps(msg, default=str) + "\n")
-    # LLM summarizes
-    response = client.messages.create(
-        model=MODEL,
-        messages=[{"role": "user", "content":
-            "Summarize this conversation for continuity..."
-            + json.dumps(messages, default=str)[:80000]}],
-        max_tokens=2000,
-    )
-    return [
-        {"role": "user", "content": f"[Compressed]\n\n{response.content[0].text}"},
-    ]
+```ts
+async function autoCompact(messages: Message[]) {
+  const transcriptPath = path.join(
+    transcriptDir,
+    `transcript_${Date.now()}.jsonl`
+  );
+  await fs.writeFile(
+    transcriptPath,
+    messages.map((message) => JSON.stringify(message)).join('\n')
+  );
+
+  const response = await client.messages.create({
+    model,
+    messages: [{
+      role: 'user',
+      content: 'Summarize this conversation for continuity...'
+        + JSON.stringify(messages).slice(0, 80_000),
+    }],
+    max_tokens: 2000,
+  });
+
+  return [{ role: 'user', content: `[Compressed]\n\n${response.content[0].text}` }];
+}
 ```
 
 3. **第3層 -- manual compact**: `compact`ツールが同じ要約処理をオンデマンドでトリガーする。
 
 4. ループが3層すべてを統合する:
 
-```python
-def agent_loop(messages: list):
-    while True:
-        micro_compact(messages)                        # Layer 1
-        if estimate_tokens(messages) > THRESHOLD:
-            messages[:] = auto_compact(messages)       # Layer 2
-        response = client.messages.create(...)
-        # ... tool execution ...
-        if manual_compact:
-            messages[:] = auto_compact(messages)       # Layer 3
+```ts
+async function agentLoop(messages: Message[]) {
+  while (true) {
+    microCompact(messages);                     // Layer 1
+    if (estimateTokens(messages) > THRESHOLD) {
+      messages.splice(0, messages.length, ...(await autoCompact(messages))); // Layer 2
+    }
+
+    const response = await callModel(messages);
+    await executeTools(response, messages);
+
+    if (manualCompactRequested(response)) {
+      messages.splice(0, messages.length, ...(await autoCompact(messages))); // Layer 3
+    }
+  }
+}
 ```
 
 トランスクリプトがディスク上に完全な履歴を保持する。何も真に失われず、アクティブなコンテキストの外に移動されるだけ。

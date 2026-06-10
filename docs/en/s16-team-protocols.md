@@ -25,7 +25,7 @@ Both scenarios share the same structure: one side sends a request, the other rep
 
 ![Team Protocols Overview](/course-assets/s16_team_protocols/team-protocols-overview.en.svg)
 
-Teaching code continues the agent capability arc from earlier chapters and adds structured protocols on top of S15's team communication. To stay focused on the protocol mechanism, it omits full error recovery, memory, and skill systems. Added: **ProtocolState** (request state tracking), **dispatch_message** (routes incoming messages by type to handlers), **match_response** (correlates response to request via request_id, with type validation).
+Teaching code continues the agent capability arc from earlier chapters and adds structured protocols on top of S15's team communication. To stay focused on the protocol mechanism, it omits full error recovery, memory, and skill systems. Added: **ProtocolState** (request state tracking), **dispatchMessage** (routes incoming messages by type to handlers), **matchResponse** (correlates response to request via requestId, with type validation).
 
 Two protocols, one mechanism:
 
@@ -44,21 +44,21 @@ Two protocols, one mechanism:
 
 Each protocol request creates a state record tracking who sent it, to whom, current status, and payload:
 
-```python
-@dataclass
-class ProtocolState:
-    request_id: str      # Unique ID, e.g. "req_004281"
-    type: str            # "shutdown" | "plan_approval"
-    sender: str          # Sender
-    target: str          # Recipient
-    status: str          # pending | approved | rejected
-    payload: str         # Plan text or shutdown reason
-    created_at: float    # Timestamp
+```ts
+type ProtocolState = {
+  requestId: string;      // Unique ID, e.g. 'req_004281'
+  type: 'shutdown' | 'plan_approval';
+  sender: string;
+  target: string;
+  status: 'pending' | 'approved' | 'rejected';
+  payload: string;
+  createdAt: number;
+};
 
-pending_requests: dict[str, ProtocolState] = {}
+const pendingRequests = new Map<string, ProtocolState>();
 ```
 
-A record is created when sending a request, found via `request_id` when receiving a response, and its status updated.
+A record is created when sending a request, found via `requestId` when receiving a response, and its status updated.
 
 ### Four-Step Protocol Flow
 
@@ -66,84 +66,90 @@ Using shutdown as an example, the full chain:
 
 ```
 1. Lead sends request
-   req_id = new_request_id()           # "req_004281"
-   pending_requests[req_id] = ProtocolState(type="shutdown", status="pending", ...)
-   BUS.send("lead", "alice", "shutdown_request", metadata={"request_id": req_id})
+   const requestId = newRequestId();      // "req_004281"
+   pendingRequests.set(requestId, { type: "shutdown", status: "pending", /* ... */ });
+   bus.send("lead", "alice", "shutdown_request", { requestId })
 
 2. Teammate receives → dispatch
-   inbox = BUS.read_inbox("alice")
-   msg_type = msg["type"]              # "shutdown_request"
-   → routed to handle_shutdown_request()
+   const inbox = bus.readInbox("alice");
+   const messageType = message.type;       // "shutdown_request"
+   → routed to handleShutdownRequest()
 
 3. Teammate replies
-   BUS.send("alice", "lead", "shutdown_response",
-            metadata={"request_id": req_id, "approve": True})
+   bus.send("alice", "lead", "shutdown_response",
+            { requestId, approve: true });
 
 4. Lead receives response → match
-   match_response("shutdown_response", req_id, approve=True)
-   pending_requests[req_id].status = "approved"
+   matchResponse("shutdown_response", requestId, true);
+   pendingRequests.get(requestId)!.status = "approved";
 ```
 
-`request_id` is the correlation key across the entire chain: the request carries it out, the response carries it back.
+`requestId` is the correlation key across the entire chain: the request carries it out, the response carries it back.
 
-### dispatch_message: Route by Type
+### dispatchMessage: Route by Type
 
-A teammate's inbox receives both plain messages and protocol messages. `handle_inbox_message` dispatches by message type:
+A teammate's inbox receives both plain messages and protocol messages. `handleInboxMessage` dispatches by message type:
 
-```python
-def handle_inbox_message(name, msg, messages):
-    msg_type = msg.get("type", "message")
-    req_id = msg.get("metadata", {}).get("request_id", "")
+```ts
+function handleInboxMessage(name: string, message: ProtocolMessage, messages: Message[]) {
+  const messageType = message.type ?? 'message';
+  const requestId = message.metadata?.requestId ?? '';
 
-    if msg_type == "shutdown_request":
-        BUS.send(name, "lead", "Shutting down.", "shutdown_response",
-                 {"request_id": req_id, "approve": True})
-        return True   # Stop the loop
+  if (messageType === 'shutdown_request') {
+    bus.send(name, 'lead', 'Shutting down.', 'shutdown_response', {
+      requestId,
+      approve: true,
+    });
+    return true; // Stop the loop
+  }
 
-    if msg_type == "plan_approval_response":
-        approve = msg["metadata"].get("approve", False)
-        messages.append({"role": "user",
-            "content": "[Plan approved]" if approve else "[Plan rejected]"})
-    return False       # Continue
+  if (messageType === 'plan_approval_response') {
+    const approved = Boolean(message.metadata?.approve);
+    messages.push({ role: 'user', content: approved ? '[Plan approved]' : '[Plan rejected]' });
+  }
+
+  return false; // Continue
+}
 ```
 
 Adding a new protocol type means adding a new `if` branch.
 
-### match_response: Type Validation
+### matchResponse: Type Validation
 
-`match_response` doesn't just find state by `request_id`, it also validates that the response type matches the request type:
+`matchResponse` doesn't just find state by `requestId`, it also validates that the response type matches the request type:
 
-```python
-def match_response(response_type, request_id, approve):
-    state = pending_requests.get(request_id)
-    if not state:
-        return
-    if state.type == "shutdown" and response_type != "shutdown_response":
-        return  # type mismatch, skip
-    if state.type == "plan_approval" and response_type != "plan_approval_response":
-        return
-    if state.status != "pending":
-        return  # already resolved, skip duplicate
-    state.status = "approved" if approve else "rejected"
+```ts
+function matchResponse(responseType: string, requestId: string, approve: boolean) {
+  const state = pendingRequests.get(requestId);
+  if (!state) return;
+  if (state.type === 'shutdown' && responseType !== 'shutdown_response') return;
+  if (state.type === 'plan_approval' && responseType !== 'plan_approval_response') return;
+  if (state.status !== 'pending') return;
+
+  state.status = approve ? 'approved' : 'rejected';
+}
 ```
 
 A shutdown_response cannot accidentally approve a plan_approval request.
 
-### Unified Inbox Consumer: consume_lead_inbox
+### Unified Inbox Consumer: consumeLeadInbox
 
-Both the `check_inbox` tool and the main loop call the same `consume_lead_inbox()` function, routing protocol messages before returning remaining content. This prevents messages from being consumed without protocol state updates:
+Both the `check_inbox` tool and the main loop call the same `consumeLeadInbox()` function, routing protocol messages before returning remaining content. This prevents messages from being consumed without protocol state updates:
 
-```python
-def consume_lead_inbox(route_protocol=True) -> list[dict]:
-    msgs = BUS.read_inbox("lead")
-    if route_protocol:
-        for msg in msgs:
-            meta = msg.get("metadata", {})
-            req_id = meta.get("request_id", "")
-            msg_type = msg.get("type", "")
-            if req_id and msg_type.endswith("_response"):
-                match_response(msg_type, req_id, meta.get("approve", False))
-    return msgs
+```ts
+function consumeLeadInbox(routeProtocol = true) {
+  const messages = bus.readInbox('lead');
+  if (routeProtocol) {
+    for (const message of messages) {
+      const requestId = message.metadata?.requestId ?? '';
+      const messageType = message.type ?? '';
+      if (requestId && messageType.endsWith('_response')) {
+        matchResponse(messageType, requestId, Boolean(message.metadata?.approve));
+      }
+    }
+  }
+  return messages;
+}
 ```
 
 The main loop also injects inbox messages into `history` so the LLM can see and react to them.
@@ -165,18 +171,18 @@ Teaching version omits idle_notification to Lead. Real CC sends `idle_notificati
 
 ```
 1. Lead: "Have Alice create a file, then shut her down"
-2. Lead → spawn_teammate("alice", "backend", "Create config.py")
-3. alice thread starts → write_file("config.py", "...") → done → idle
-4. Lead → request_shutdown("alice")
-   → BUS.send("shutdown_request", {request_id: "req_000142"})
-5. alice idle poll receives → handle_shutdown_request
-   → BUS.send("shutdown_response", {request_id: "req_000142", approve: True})
-6. Lead consume_lead_inbox → match_response("req_000142", approve=True)
-   → pending_requests["req_000142"].status = "approved"
+2. Lead → spawnTeammate("alice", "backend", "Create config.ts")
+3. alice thread starts → writeFile("config.ts", "...") → done → idle
+4. Lead → requestShutdown("alice")
+   → bus.send("shutdown_request", { requestId: "req_000142" })
+5. alice idle poll receives → handleShutdownRequest
+   → bus.send("shutdown_response", { requestId: "req_000142", approve: true })
+6. Lead consumeLeadInbox → matchResponse("req_000142", true)
+   → pendingRequests.get("req_000142")!.status = "approved"
    → inbox message injected into history, LLM sees shutdown result
 ```
 
-Shutdown handshake complete: request → confirm → shutdown. Every step tracked by `request_id`.
+Shutdown handshake complete: request → confirm → shutdown. Every step tracked by `requestId`.
 
 ---
 
@@ -186,12 +192,12 @@ Shutdown handshake complete: request → confirm → shutdown. Every step tracke
 |-----------|-------------|-------------|
 | Coordination | Loose text messages | Structured request-response protocol |
 | Request tracking | None | ProtocolState + pending_requests dict |
-| Message routing | All treated as text | dispatch_message routes by type |
-| Shutdown | Natural exit or kill thread | request_id handshake mechanism |
+| Message routing | All treated as text | dispatchMessage routes by type |
+| Shutdown | Natural exit or kill thread | requestId handshake mechanism |
 | Plan approval | None | Message flow example (no execution gating) |
 | New message types | message, result | + shutdown_request/response, plan_approval_request/response |
 | Teammate lifecycle | Max 10 rounds | Idle loop (waits for inbox messages) |
-| Lead inbox | check_inbox and main loop read separately | Unified consume_lead_inbox |
+| Lead inbox | check_inbox and main loop read separately | Unified consumeLeadInbox |
 | Lead tools | 14 (s15) | 14 (core tool set plus request_shutdown, request_plan, review_plan) |
 | Teammate tools | 4 (s15) | + submit_plan (5) |
 
@@ -209,13 +215,13 @@ s17 Autonomous Agents → Self-organizing teammates, no leader assignment needed
 <details>
 <summary>Deep Dive into CC Source</summary>
 
-CC's team protocol implementation (`teammateMailbox.ts`, 1184 lines) shares the same core structure as the teaching version: request_id + approve/reject request-response pattern. Differences:
+CC's team protocol implementation (`teammateMailbox.ts`, 1184 lines) shares the same core structure as the teaching version: requestId + approve/reject request-response pattern. Differences:
 
 **Shutdown protocol**: CC's shutdown is three-way communication (`teammateMailbox.ts:720-763`, `SendMessageTool.ts:268-430`). Lead sends `shutdown_request`, teammate replies `shutdown_approved` (or `shutdown_rejected` with reason), system sends `teammate_terminated` to notify all parties. After confirmation, system cleans up pane (tmux/iTerm2), unassigns tasks, removes member from team config (`useInboxPoller.ts:677-800`). Teaching version uses `shutdown_response` as a unified name; real source splits into `shutdown_approved` and `shutdown_rejected` as two separate message types.
 
 **Plan approval**: In the real source, plan approval request is generated by `ExitPlanModeV2Tool.ts:263-312` when a plan-mode-required teammate exits plan mode. `useInboxPoller.ts:599-661` currently auto-writes approval and passes the request to Lead as context (regular message). `SendMessageTool.ts:434-518` retains explicit approve/reject response capability — approval can simultaneously set `permissionMode` (e.g. "approved but run in plan mode"), response can include `feedback` string for teammate to revise and resubmit. Not a simple "Lead manually uses review_plan tool" flow.
 
-**Message format**: CC's protocol messages are structured JSON (with Zod schema validation), teaching version uses simple type + metadata dict. Field names are also inconsistent: permission uses `request_id` (`teammateMailbox.ts:453-462`), shutdown and plan approval use `requestId` (`teammateMailbox.ts:684-763`).
+**Message format**: CC's protocol messages are structured JSON (with Zod schema validation), teaching version uses simple type + metadata dict. Field names are also inconsistent: permission uses `requestId` (`teammateMailbox.ts:453-462`), shutdown and plan approval use `requestId` (`teammateMailbox.ts:684-763`).
 
 **Execution gating**: CC's teammates have full permission gating. Unapproved high-risk operations are intercepted, not optional. Teaching version only demonstrates the message flow without execution interception.
 

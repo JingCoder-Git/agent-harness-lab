@@ -44,8 +44,13 @@ Sync vs Background:
 The model explicitly requests background execution via the bash tool's `run_in_background` parameter. If the model doesn't specify, the teaching version falls back to keyword heuristics:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function shouldRunBackground(toolName: string, input: { runInBackground?: boolean; command?: string }) {
+  if (toolName !== 'bash') return false;
+  if (input.runInBackground === true) return true;
+
+  const command = input.command ?? '';
+  return /npm install|npm run build|pytest|cargo test/.test(command);
+}
 ```
 
 CC's bash tool schema has a `run_in_background: boolean` parameter (`BashTool.tsx:241`). The model decides which commands go to background, no keyword guessing. The teaching version keeps heuristics as fallback, but the primary path is explicit model request.
@@ -55,19 +60,38 @@ CC's bash tool schema has a `run_in_background: boolean` parameter (`BashTool.ts
 Wraps the tool call in a worker function, dispatches to a daemon thread. Each background task gets a unique ID, with state tracked in the `background_tasks` object:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+type BackgroundTask = { id: string; command: string; status: 'running' | 'done'; result?: string };
+const backgroundTasks = new Map<string, BackgroundTask>();
+const backgroundResults: string[] = [];
+
+function startBackgroundTask(command: string, run: () => Promise<string>) {
+  const id = `bg_${String(backgroundTasks.size + 1).padStart(4, '0')}`;
+  backgroundTasks.set(id, { id, command, status: 'running' });
+
+  void run().then((result) => {
+    backgroundTasks.set(id, { id, command, status: 'done', result });
+    backgroundResults.push(`<task_notification id="${id}">${result}</task_notification>`);
+  });
+
+  return `[Background task ${id} started]`;
+}
 ```
 
-Returns `bg_id` instead of just `[Running in background...]`. `daemon=True` ensures threads exit when the agent process exits. The teaching version uses in-memory dicts for tracking; real CC has `LocalShellTaskState`, output redirected to files, with full lifecycle including stopping tasks and reading subsequent output.
+Returns `bg_id` instead of just `[Running in background...]`. `daemon: true` ensures threads exit when the agent process exits. The teaching version uses in-memory dicts for tracking; real CC has `LocalShellTaskState`, output redirected to files, with full lifecycle including stopping tasks and reading subsequent output.
 
 ### collect_background_results: Notification Collection
 
 When background tasks complete, results are collected and formatted as `<task_notification>` messages:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+function collectBackgroundResults() {
+  const ready = [...backgroundResults];
+  backgroundResults.length = 0;
+  return ready.map((content) => ({
+    role: 'user' as const,
+    content,
+  }));
+}
 ```
 
 Notifications don't reuse the original `tool_use_id`. The original tool call was already answered with a placeholder `tool_result`; background completion is an independent event, injected in `task_notification` format. This respects Messages API tool pairing: one `tool_use` gets exactly one `tool_result`.
@@ -77,8 +101,21 @@ Notifications don't reuse the original `tool_use_id`. The original tool call was
 In the agent loop, tool execution splits into two paths. Notifications and results merge into a single user message:
 
 ```ts
-// TypeScript reference code for this step is available in the Code tab.
-// The lesson text keeps the concept; the runnable reference has been rewritten for Node.js.
+async function agentLoop(messages: Message[]) {
+  while (true) {
+    messages.push(...collectBackgroundResults());
+
+    const response = await callModel(messages);
+    const toolResults = await executeToolCalls(response, (toolCall) => {
+      if (shouldRunBackground(toolCall.name, toolCall.input)) {
+        return startBackgroundTask(toolCall.input.command, () => runBash(toolCall.input.command));
+      }
+      return runTool(toolCall);
+    });
+
+    messages.push({ role: 'user', content: toolResults });
+  }
+}
 ```
 
 Slow operations get a placeholder tool_result with `bg_id`, so the LLM knows this command is still running and can do other things first. When background completes, the notification is injected as an independent text block alongside the current turn's tool_results in one user message.
